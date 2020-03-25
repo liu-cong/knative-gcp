@@ -24,6 +24,7 @@ import (
 	time "time"
 
 	versioned "github.com/google/knative-gcp/pkg/client/clientset/versioned"
+	broker "github.com/google/knative-gcp/pkg/client/informers/externalversions/broker"
 	events "github.com/google/knative-gcp/pkg/client/informers/externalversions/events"
 	internalinterfaces "github.com/google/knative-gcp/pkg/client/informers/externalversions/internalinterfaces"
 	messaging "github.com/google/knative-gcp/pkg/client/informers/externalversions/messaging"
@@ -175,10 +176,15 @@ type SharedInformerFactory interface {
 	ForResource(resource schema.GroupVersionResource) (GenericInformer, error)
 	WaitForCacheSync(stopCh <-chan struct{}) map[reflect.Type]bool
 
+	Broker() broker.Interface
 	Events() events.Interface
 	Messaging() messaging.Interface
 	Pubsub() pubsub.Interface
 	Security() security.Interface
+}
+
+func (f *sharedInformerFactory) Broker() broker.Interface {
+	return broker.New(f, f.namespace, f.tweakListOptions)
 }
 
 func (f *sharedInformerFactory) Events() events.Interface {

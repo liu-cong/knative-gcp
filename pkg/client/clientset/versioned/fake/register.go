@@ -19,6 +19,7 @@ limitations under the License.
 package fake
 
 import (
+	brokerv1beta1 "github.com/google/knative-gcp/pkg/apis/broker/v1beta1"
 	eventsv1alpha1 "github.com/google/knative-gcp/pkg/apis/events/v1alpha1"
 	messagingv1alpha1 "github.com/google/knative-gcp/pkg/apis/messaging/v1alpha1"
 	pubsubv1alpha1 "github.com/google/knative-gcp/pkg/apis/pubsub/v1alpha1"
@@ -34,6 +35,7 @@ var scheme = runtime.NewScheme()
 var codecs = serializer.NewCodecFactory(scheme)
 var parameterCodec = runtime.NewParameterCodec(scheme)
 var localSchemeBuilder = runtime.SchemeBuilder{
+	brokerv1beta1.AddToScheme,
 	eventsv1alpha1.AddToScheme,
 	messagingv1alpha1.AddToScheme,
 	pubsubv1alpha1.AddToScheme,
