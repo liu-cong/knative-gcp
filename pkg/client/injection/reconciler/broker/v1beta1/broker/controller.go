@@ -36,7 +36,7 @@ import (
 
 const (
 	defaultControllerAgentName = "broker-controller"
-	defaultFinalizerName       = "brokers.broker"
+	defaultFinalizerName       = "brokers.eventing.knative.dev"
 	defaultQueueName           = "brokers"
 )
 

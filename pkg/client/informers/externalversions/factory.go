@@ -176,14 +176,14 @@ type SharedInformerFactory interface {
 	ForResource(resource schema.GroupVersionResource) (GenericInformer, error)
 	WaitForCacheSync(stopCh <-chan struct{}) map[reflect.Type]bool
 
-	Broker() broker.Interface
+	Eventing() broker.Interface
 	Events() events.Interface
 	Messaging() messaging.Interface
 	Pubsub() pubsub.Interface
 	Security() security.Interface
 }
 
-func (f *sharedInformerFactory) Broker() broker.Interface {
+func (f *sharedInformerFactory) Eventing() broker.Interface {
 	return broker.New(f, f.namespace, f.tweakListOptions)
 }
 

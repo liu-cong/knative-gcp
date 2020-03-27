@@ -200,7 +200,7 @@ func (r *reconcilerImpl) updateStatus(existing *v1beta1.Broker, desired *v1beta1
 	return reconciler.RetryUpdateConflicts(func(attempts int) (err error) {
 		// The first iteration tries to use the injectionInformer's state, subsequent attempts fetch the latest state via API.
 		if attempts > 0 {
-			existing, err = r.Client.BrokerV1beta1().Brokers(desired.Namespace).Get(desired.Name, metav1.GetOptions{})
+			existing, err = r.Client.EventingV1beta1().Brokers(desired.Namespace).Get(desired.Name, metav1.GetOptions{})
 			if err != nil {
 				return err
 			}
@@ -212,7 +212,7 @@ func (r *reconcilerImpl) updateStatus(existing *v1beta1.Broker, desired *v1beta1
 		}
 
 		existing.Status = desired.Status
-		_, err = r.Client.BrokerV1beta1().Brokers(existing.Namespace).UpdateStatus(existing)
+		_, err = r.Client.EventingV1beta1().Brokers(existing.Namespace).UpdateStatus(existing)
 		return err
 	})
 }
@@ -266,7 +266,7 @@ func (r *reconcilerImpl) updateFinalizersFiltered(ctx context.Context, resource 
 		return resource, err
 	}
 
-	resource, err = r.Client.BrokerV1beta1().Brokers(resource.Namespace).Patch(resource.Name, types.MergePatchType, patch)
+	resource, err = r.Client.EventingV1beta1().Brokers(resource.Namespace).Patch(resource.Name, types.MergePatchType, patch)
 	if err != nil {
 		r.Recorder.Eventf(resource, v1.EventTypeWarning, "FinalizerUpdateFailed",
 			"Failed to update finalizers for %q: %v", resource.Name, err)

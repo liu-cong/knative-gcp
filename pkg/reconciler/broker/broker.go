@@ -22,14 +22,15 @@ import (
 
 	brokerv1beta1 "github.com/google/knative-gcp/pkg/apis/broker/v1beta1"
 	brokerreconciler "github.com/google/knative-gcp/pkg/client/injection/reconciler/broker/v1beta1/broker"
+	brokerlisters "github.com/google/knative-gcp/pkg/client/listers/broker/v1beta1"
 	gpubsub "github.com/google/knative-gcp/pkg/gclient/pubsub"
 	"github.com/google/knative-gcp/pkg/reconciler"
 	"github.com/google/knative-gcp/pkg/utils"
 	"go.uber.org/zap"
+	gstatus "google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	corev1listers "k8s.io/client-go/listers/core/v1"
-	eventinglisters "knative.dev/eventing/pkg/client/listers/eventing/v1alpha1"
 	"knative.dev/eventing/pkg/duck"
 	"knative.dev/pkg/logging"
 	pkgreconciler "knative.dev/pkg/reconciler"
@@ -40,6 +41,10 @@ const (
 	// Name of the corev1.Events emitted from the Broker reconciliation process.
 	brokerReconcileError = "BrokerReconcileError"
 	brokerReconciled     = "BrokerReconciled"
+	topicCreated         = "TopicCreated"
+	subCreated           = "SubscriptionCreated"
+	topicDeleted         = "TopicDeleted"
+	subDeleted           = "SubscriptionDeleted"
 )
 
 // TODO mostly deal with gcp resources here. defer other things like deployments while
@@ -54,9 +59,9 @@ type Reconciler struct {
 	*reconciler.Base
 
 	// listers index properties about resources
-	brokerLister    eventinglisters.BrokerLister
+	brokerLister    brokerlisters.BrokerLister
 	endpointsLister corev1listers.EndpointsLister
-	triggerLister   eventinglisters.TriggerLister
+	triggerLister   brokerlisters.TriggerLister
 
 	// Dynamic tracker to track KResources. It tracks the dependency between Triggers and Sources.
 	kresourceTracker duck.ListableTracker
@@ -89,7 +94,7 @@ func newReconciledNormal(namespace, name string) pkgreconciler.Event {
 	return pkgreconciler.NewEvent(corev1.EventTypeNormal, brokerReconciled, "Broker reconciled: \"%s/%s\"", namespace, name)
 }
 
-func (r *Reconciler) ReconcileKind(ctx context.Context, b *eventingv1alpha1.Broker) pkgreconciler.Event {
+func (r *Reconciler) ReconcileKind(ctx context.Context, b *brokerv1beta1.Broker) pkgreconciler.Event {
 	err := r.reconcileBroker(ctx, b)
 	if err != nil {
 		logging.FromContext(ctx).Error("Problem reconciling broker", zap.Error(err))
@@ -99,7 +104,7 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, b *eventingv1alpha1.Brok
 	// whatever info is available. This should all be in the same configmap
 	// so it's transactional.
 
-	if b.Status.IsReady() {
+	if false { //TODO b.Status.IsReady() {
 		// So, at this point the Broker is ready and everything should be solid
 		// for the triggers to act upon, so reconcile them.
 		te := r.reconcileTriggers(ctx, b)
@@ -116,11 +121,70 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, b *eventingv1alpha1.Brok
 	return err
 }
 
-func (r *Reconciler) FinalizeKind(ctx context.Context, b *eventingv1alpha1.Broker) pkgreconciler.Event {
-	//TODO delete topic immediately
-	//TODO delete PS either immediately, or can set expirationpolicy to make pubsub delete it.
+func (r *Reconciler) FinalizeKind(ctx context.Context, b *brokerv1beta1.Broker) pkgreconciler.Event {
+	logger := logging.FromContext(ctx).Desugar()
+
+	//HACKHACKHACK
+	b.Status.TopicID = "TODOchildname"
+	b.Status.SubscriptionID = "TODOchildname"
+
+	// Delete topic. Pull subscriptions continue pulling from the topic until deleted themselves.
+	if b.Status.TopicID != "" {
+		// At this point the project ID should have been populated in the status.
+		// Querying Pub/Sub as the topic could have been deleted outside the cluster (e.g, through gcloud).
+		client, err := r.CreateClientFn(ctx, b.Status.ProjectID)
+		if err != nil {
+			logger.Error("Failed to create Pub/Sub client", zap.Error(err))
+			return err
+		}
+		defer client.Close()
+
+		t := client.Topic(b.Status.TopicID)
+		exists, err := t.Exists(ctx)
+		if err != nil {
+			logger.Error("Failed to verify Pub/Sub topic exists", zap.Error(err))
+			return err
+		}
+		if exists {
+			if err := t.Delete(ctx); err != nil {
+				logger.Error("Failed to delete Pub/Sub topic", zap.Error(err))
+				return err
+			}
+			logger.Info("Deleted PubSub topic", zap.String("name", t.ID()))
+			r.Recorder.Eventf(b, corev1.EventTypeNormal, topicDeleted, "Deleted PubSub topic %q", t.ID())
+		}
+	}
+
+	// Delete pull subscription.
+	// TODO could alternately set expiration policy to make pubsub delete it after some idle time.
 	// https://cloud.google.com/pubsub/docs/admin#deleting_a_topic
-	// Update triggers to have a missing broker and be unready
+	if b.Status.SubscriptionID != "" {
+		// At this point the project ID should have been populated in the status.
+		// Querying Pub/Sub as the subscription could have been deleted outside the cluster (e.g, through gcloud).
+		client, err := r.CreateClientFn(ctx, b.Status.ProjectID)
+		if err != nil {
+			logger.Error("Failed to create Pub/Sub client", zap.Error(err))
+			return err
+		}
+		defer client.Close()
+
+		sub := client.Subscription(b.Status.SubscriptionID)
+		exists, err := sub.Exists(ctx)
+		if err != nil {
+			logger.Error("Failed to verify Pub/Sub subscription exists", zap.Error(err))
+			return err
+		}
+		if exists {
+			if err := sub.Delete(ctx); err != nil {
+				logger.Error("Failed to delete Pub/Sub subscription", zap.Error(err))
+				return err
+			}
+			logger.Info("Deleted PubSub subscription", zap.String("name", sub.ID()))
+			r.Recorder.Eventf(b, corev1.EventTypeNormal, subDeleted, "Deleted PubSub subscription %q", sub.ID())
+		}
+	}
+
+	// Update triggers to have a missing broker and be unready.
 	if err := r.propagateBrokerStatusToTriggers(ctx, b.Namespace, b.Name, nil); err != nil {
 		return fmt.Errorf("Trigger reconcile failed: %v", err)
 	}
@@ -130,7 +194,7 @@ func (r *Reconciler) FinalizeKind(ctx context.Context, b *eventingv1alpha1.Broke
 func (r *Reconciler) reconcileBroker(ctx context.Context, b *brokerv1beta1.Broker) pkgreconciler.Event {
 	logger := logging.FromContext(ctx).Desugar()
 	logger.Debug("Reconciling", zap.Any("Broker", b))
-	b.Status.InitializeConditions()
+	//TODO b.Status.InitializeConditions()
 	b.Status.ObservedGeneration = b.Generation
 
 	// Create decoupling topic and pullsub for this broker. Ingress will push
@@ -161,7 +225,7 @@ func (r *Reconciler) reconcileDecouplingTopicAndSub(ctx context.Context, b *brok
 
 	// Auth to GCP is handled by having the GOOGLE_APPLICATION_CREDENTIALS environment variable
 	// pointing at a credential file.
-	client, err := r.createClientFn(ctx, b.Status.ProjectID)
+	client, err := r.CreateClientFn(ctx, b.Status.ProjectID)
 	if err != nil {
 		logger.Error("Failed to create Pub/Sub client", zap.Error(err))
 		return err
@@ -188,13 +252,15 @@ func (r *Reconciler) reconcileDecouplingTopicAndSub(ctx context.Context, b *brok
 			// For some reason (maybe some cache invalidation thing), sometimes t.Exists returns that the topic
 			// doesn't exist but it actually does. When we try to create it again, it fails with an AlreadyExists
 			// reason. We check for that error here. If it happens, then return nil.
-			if st, ok := gstatus.FromError(err); !ok {
+			if _, ok := gstatus.FromError(err); !ok {
 				logger.Error("Failed from Pub/Sub client while creating topic", zap.Error(err))
 				return err
 			}
 			logger.Error("Failed to create Pub/Sub topic", zap.Error(err))
 			return err
 		}
+		logger.Info("Created PubSub topic", zap.String("name", t.ID()))
+		r.Recorder.Eventf(b, corev1.EventTypeNormal, topicCreated, "Created PubSub topic %q", t.ID())
 	}
 
 	b.Status.TopicID = t.ID()
@@ -209,7 +275,7 @@ func (r *Reconciler) reconcileDecouplingTopicAndSub(ctx context.Context, b *brok
 	subExists, err := sub.Exists(ctx)
 	if err != nil {
 		logger.Error("Failed to verify Pub/Sub subscription exists", zap.Error(err))
-		return "", err
+		return err
 	}
 
 	if !subExists {
@@ -223,8 +289,10 @@ func (r *Reconciler) reconcileDecouplingTopicAndSub(ctx context.Context, b *brok
 		sub, err = client.CreateSubscription(ctx, subID, subConfig)
 		if err != nil {
 			logger.Error("Failed to create subscription", zap.Error(err))
-			return "", err
+			return err
 		}
+		logger.Info("Created PubSub subscription", zap.String("name", sub.ID()))
+		r.Recorder.Eventf(b, corev1.EventTypeNormal, subCreated, "Created PubSub subscription %q", sub.ID())
 	}
 	//TODO update the subscription's config if needed.
 	b.Status.SubscriptionID = sub.ID()
@@ -278,7 +346,8 @@ func (r *Reconciler) propagateBrokerStatusToTriggers(ctx context.Context, namesp
 			if bs == nil {
 				trigger.Status.MarkBrokerFailed("BrokerDoesNotExist", "Broker %q does not exist", name)
 			} else {
-				trigger.Status.PropagateBrokerStatus(bs)
+				//TODO types
+				//trigger.Status.PropagateBrokerStatus(bs.BrokerStatus)
 			}
 			if _, updateStatusErr := r.updateTriggerStatus(ctx, trigger); updateStatusErr != nil {
 				logging.FromContext(ctx).Error("Failed to update Trigger status", zap.Error(updateStatusErr))

@@ -24,17 +24,21 @@ import (
 	testing "k8s.io/client-go/testing"
 )
 
-type FakeBrokerV1beta1 struct {
+type FakeEventingV1beta1 struct {
 	*testing.Fake
 }
 
-func (c *FakeBrokerV1beta1) Brokers(namespace string) v1beta1.BrokerInterface {
+func (c *FakeEventingV1beta1) Brokers(namespace string) v1beta1.BrokerInterface {
 	return &FakeBrokers{c, namespace}
+}
+
+func (c *FakeEventingV1beta1) Triggers(namespace string) v1beta1.TriggerInterface {
+	return &FakeTriggers{c, namespace}
 }
 
 // RESTClient returns a RESTClient that is used to communicate
 // with API server by this client implementation.
-func (c *FakeBrokerV1beta1) RESTClient() rest.Interface {
+func (c *FakeEventingV1beta1) RESTClient() rest.Interface {
 	var ret *rest.RESTClient
 	return ret
 }

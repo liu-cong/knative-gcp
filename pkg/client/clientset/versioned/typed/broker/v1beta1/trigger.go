@@ -29,46 +29,46 @@ import (
 	rest "k8s.io/client-go/rest"
 )
 
-// BrokersGetter has a method to return a BrokerInterface.
+// TriggersGetter has a method to return a TriggerInterface.
 // A group's client should implement this interface.
-type BrokersGetter interface {
-	Brokers(namespace string) BrokerInterface
+type TriggersGetter interface {
+	Triggers(namespace string) TriggerInterface
 }
 
-// BrokerInterface has methods to work with Broker resources.
-type BrokerInterface interface {
-	Create(*v1beta1.Broker) (*v1beta1.Broker, error)
-	Update(*v1beta1.Broker) (*v1beta1.Broker, error)
-	UpdateStatus(*v1beta1.Broker) (*v1beta1.Broker, error)
+// TriggerInterface has methods to work with Trigger resources.
+type TriggerInterface interface {
+	Create(*v1beta1.Trigger) (*v1beta1.Trigger, error)
+	Update(*v1beta1.Trigger) (*v1beta1.Trigger, error)
+	UpdateStatus(*v1beta1.Trigger) (*v1beta1.Trigger, error)
 	Delete(name string, options *v1.DeleteOptions) error
 	DeleteCollection(options *v1.DeleteOptions, listOptions v1.ListOptions) error
-	Get(name string, options v1.GetOptions) (*v1beta1.Broker, error)
-	List(opts v1.ListOptions) (*v1beta1.BrokerList, error)
+	Get(name string, options v1.GetOptions) (*v1beta1.Trigger, error)
+	List(opts v1.ListOptions) (*v1beta1.TriggerList, error)
 	Watch(opts v1.ListOptions) (watch.Interface, error)
-	Patch(name string, pt types.PatchType, data []byte, subresources ...string) (result *v1beta1.Broker, err error)
-	BrokerExpansion
+	Patch(name string, pt types.PatchType, data []byte, subresources ...string) (result *v1beta1.Trigger, err error)
+	TriggerExpansion
 }
 
-// brokers implements BrokerInterface
-type brokers struct {
+// triggers implements TriggerInterface
+type triggers struct {
 	client rest.Interface
 	ns     string
 }
 
-// newBrokers returns a Brokers
-func newBrokers(c *EventingV1beta1Client, namespace string) *brokers {
-	return &brokers{
+// newTriggers returns a Triggers
+func newTriggers(c *EventingV1beta1Client, namespace string) *triggers {
+	return &triggers{
 		client: c.RESTClient(),
 		ns:     namespace,
 	}
 }
 
-// Get takes name of the broker, and returns the corresponding broker object, and an error if there is any.
-func (c *brokers) Get(name string, options v1.GetOptions) (result *v1beta1.Broker, err error) {
-	result = &v1beta1.Broker{}
+// Get takes name of the trigger, and returns the corresponding trigger object, and an error if there is any.
+func (c *triggers) Get(name string, options v1.GetOptions) (result *v1beta1.Trigger, err error) {
+	result = &v1beta1.Trigger{}
 	err = c.client.Get().
 		Namespace(c.ns).
-		Resource("brokers").
+		Resource("triggers").
 		Name(name).
 		VersionedParams(&options, scheme.ParameterCodec).
 		Do().
@@ -76,16 +76,16 @@ func (c *brokers) Get(name string, options v1.GetOptions) (result *v1beta1.Broke
 	return
 }
 
-// List takes label and field selectors, and returns the list of Brokers that match those selectors.
-func (c *brokers) List(opts v1.ListOptions) (result *v1beta1.BrokerList, err error) {
+// List takes label and field selectors, and returns the list of Triggers that match those selectors.
+func (c *triggers) List(opts v1.ListOptions) (result *v1beta1.TriggerList, err error) {
 	var timeout time.Duration
 	if opts.TimeoutSeconds != nil {
 		timeout = time.Duration(*opts.TimeoutSeconds) * time.Second
 	}
-	result = &v1beta1.BrokerList{}
+	result = &v1beta1.TriggerList{}
 	err = c.client.Get().
 		Namespace(c.ns).
-		Resource("brokers").
+		Resource("triggers").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Timeout(timeout).
 		Do().
@@ -93,8 +93,8 @@ func (c *brokers) List(opts v1.ListOptions) (result *v1beta1.BrokerList, err err
 	return
 }
 
-// Watch returns a watch.Interface that watches the requested brokers.
-func (c *brokers) Watch(opts v1.ListOptions) (watch.Interface, error) {
+// Watch returns a watch.Interface that watches the requested triggers.
+func (c *triggers) Watch(opts v1.ListOptions) (watch.Interface, error) {
 	var timeout time.Duration
 	if opts.TimeoutSeconds != nil {
 		timeout = time.Duration(*opts.TimeoutSeconds) * time.Second
@@ -102,32 +102,32 @@ func (c *brokers) Watch(opts v1.ListOptions) (watch.Interface, error) {
 	opts.Watch = true
 	return c.client.Get().
 		Namespace(c.ns).
-		Resource("brokers").
+		Resource("triggers").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Timeout(timeout).
 		Watch()
 }
 
-// Create takes the representation of a broker and creates it.  Returns the server's representation of the broker, and an error, if there is any.
-func (c *brokers) Create(broker *v1beta1.Broker) (result *v1beta1.Broker, err error) {
-	result = &v1beta1.Broker{}
+// Create takes the representation of a trigger and creates it.  Returns the server's representation of the trigger, and an error, if there is any.
+func (c *triggers) Create(trigger *v1beta1.Trigger) (result *v1beta1.Trigger, err error) {
+	result = &v1beta1.Trigger{}
 	err = c.client.Post().
 		Namespace(c.ns).
-		Resource("brokers").
-		Body(broker).
+		Resource("triggers").
+		Body(trigger).
 		Do().
 		Into(result)
 	return
 }
 
-// Update takes the representation of a broker and updates it. Returns the server's representation of the broker, and an error, if there is any.
-func (c *brokers) Update(broker *v1beta1.Broker) (result *v1beta1.Broker, err error) {
-	result = &v1beta1.Broker{}
+// Update takes the representation of a trigger and updates it. Returns the server's representation of the trigger, and an error, if there is any.
+func (c *triggers) Update(trigger *v1beta1.Trigger) (result *v1beta1.Trigger, err error) {
+	result = &v1beta1.Trigger{}
 	err = c.client.Put().
 		Namespace(c.ns).
-		Resource("brokers").
-		Name(broker.Name).
-		Body(broker).
+		Resource("triggers").
+		Name(trigger.Name).
+		Body(trigger).
 		Do().
 		Into(result)
 	return
@@ -136,24 +136,24 @@ func (c *brokers) Update(broker *v1beta1.Broker) (result *v1beta1.Broker, err er
 // UpdateStatus was generated because the type contains a Status member.
 // Add a +genclient:noStatus comment above the type to avoid generating UpdateStatus().
 
-func (c *brokers) UpdateStatus(broker *v1beta1.Broker) (result *v1beta1.Broker, err error) {
-	result = &v1beta1.Broker{}
+func (c *triggers) UpdateStatus(trigger *v1beta1.Trigger) (result *v1beta1.Trigger, err error) {
+	result = &v1beta1.Trigger{}
 	err = c.client.Put().
 		Namespace(c.ns).
-		Resource("brokers").
-		Name(broker.Name).
+		Resource("triggers").
+		Name(trigger.Name).
 		SubResource("status").
-		Body(broker).
+		Body(trigger).
 		Do().
 		Into(result)
 	return
 }
 
-// Delete takes name of the broker and deletes it. Returns an error if one occurs.
-func (c *brokers) Delete(name string, options *v1.DeleteOptions) error {
+// Delete takes name of the trigger and deletes it. Returns an error if one occurs.
+func (c *triggers) Delete(name string, options *v1.DeleteOptions) error {
 	return c.client.Delete().
 		Namespace(c.ns).
-		Resource("brokers").
+		Resource("triggers").
 		Name(name).
 		Body(options).
 		Do().
@@ -161,14 +161,14 @@ func (c *brokers) Delete(name string, options *v1.DeleteOptions) error {
 }
 
 // DeleteCollection deletes a collection of objects.
-func (c *brokers) DeleteCollection(options *v1.DeleteOptions, listOptions v1.ListOptions) error {
+func (c *triggers) DeleteCollection(options *v1.DeleteOptions, listOptions v1.ListOptions) error {
 	var timeout time.Duration
 	if listOptions.TimeoutSeconds != nil {
 		timeout = time.Duration(*listOptions.TimeoutSeconds) * time.Second
 	}
 	return c.client.Delete().
 		Namespace(c.ns).
-		Resource("brokers").
+		Resource("triggers").
 		VersionedParams(&listOptions, scheme.ParameterCodec).
 		Timeout(timeout).
 		Body(options).
@@ -176,12 +176,12 @@ func (c *brokers) DeleteCollection(options *v1.DeleteOptions, listOptions v1.Lis
 		Error()
 }
 
-// Patch applies the patch and returns the patched broker.
-func (c *brokers) Patch(name string, pt types.PatchType, data []byte, subresources ...string) (result *v1beta1.Broker, err error) {
-	result = &v1beta1.Broker{}
+// Patch applies the patch and returns the patched trigger.
+func (c *triggers) Patch(name string, pt types.PatchType, data []byte, subresources ...string) (result *v1beta1.Trigger, err error) {
+	result = &v1beta1.Trigger{}
 	err = c.client.Patch(pt).
 		Namespace(c.ns).
-		Resource("brokers").
+		Resource("triggers").
 		SubResource(subresources...).
 		Name(name).
 		Body(data).

@@ -30,13 +30,13 @@ import (
 
 // FakeBrokers implements BrokerInterface
 type FakeBrokers struct {
-	Fake *FakeBrokerV1beta1
+	Fake *FakeEventingV1beta1
 	ns   string
 }
 
-var brokersResource = schema.GroupVersionResource{Group: "broker", Version: "v1beta1", Resource: "brokers"}
+var brokersResource = schema.GroupVersionResource{Group: "eventing.knative.dev", Version: "v1beta1", Resource: "brokers"}
 
-var brokersKind = schema.GroupVersionKind{Group: "broker", Version: "v1beta1", Kind: "Broker"}
+var brokersKind = schema.GroupVersionKind{Group: "eventing.knative.dev", Version: "v1beta1", Kind: "Broker"}
 
 // Get takes name of the broker, and returns the corresponding broker object, and an error if there is any.
 func (c *FakeBrokers) Get(name string, options v1.GetOptions) (result *v1beta1.Broker, err error) {

@@ -1,5 +1,5 @@
 /*
-Copyright 2020 Google LLC.
+Copyright 2020 Google LLC
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -40,7 +40,7 @@ type Broker struct {
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
 	// Spec defines the desired state of the Broker.
-	Spec BrokerSpec `json:"spec,omitempty"`
+	Spec eventingv1beta1.BrokerSpec `json:"spec,omitempty"`
 
 	// Status represents the current state of the Broker. This data may be out of
 	// date.
@@ -50,8 +50,8 @@ type Broker struct {
 
 var (
 	// Check that Broker can be validated, can be defaulted, and has immutable fields.
-	_ apis.Validatable = (*Broker)(nil)
-	_ apis.Defaultable = (*Broker)(nil)
+	//_ apis.Validatable = (*Broker)(nil)
+	//_ apis.Defaultable = (*Broker)(nil)
 
 	// Check that Broker can return its spec untyped.
 	_ apis.HasSpec = (*Broker)(nil)
@@ -61,26 +61,6 @@ var (
 	// Check that we can create OwnerReferences to a Broker.
 	_ kmeta.OwnerRefable = (*Broker)(nil)
 )
-
-type BrokerSpec struct {
-	// inherits core eventing BrokerSpec.
-	//TODO it may not be possible to import this type because it will conflict with our alternate
-	// type for Broker in the global scheme.
-	eventingv1beta1.BrokerSpec `json:",inline"`
-
-	/*
-		// Config is a KReference to the configuration that specifies
-		// configuration options for this Broker. For example, this could be
-		// a pointer to a ConfigMap.
-		// +optional
-		Config *duckv1.KReference `json:"config,omitempty"`
-
-		// Delivery is the delivery specification for Events within the Broker mesh.
-		// This includes things like retries, DLQ, etc.
-		// +optional
-		Delivery *eventingduckv1beta1.DeliverySpec `json:"delivery,omitempty"`
-	*/
-}
 
 // BrokerStatus represents the current state of a Broker.
 type BrokerStatus struct {

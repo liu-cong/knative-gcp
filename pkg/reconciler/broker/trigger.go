@@ -22,13 +22,28 @@ import (
 	"reflect"
 	"time"
 
+	brokerv1beta1 "github.com/google/knative-gcp/pkg/apis/broker/v1beta1"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
+	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	"knative.dev/eventing/pkg/apis/eventing/v1alpha1"
+	duckv1 "knative.dev/pkg/apis/duck/v1"
 	"knative.dev/pkg/logging"
 )
 
-func (r *Reconciler) updateTriggerStatus(ctx context.Context, desired *v1alpha1.Trigger) (*v1alpha1.Trigger, error) {
+const (
+	// Name of the corev1.Events emitted from the Trigger reconciliation process.
+	triggerReconciled         = "TriggerReconciled"
+	triggerReadinessChanged   = "TriggerReadinessChanged"
+	triggerReconcileFailed    = "TriggerReconcileFailed"
+	triggerUpdateStatusFailed = "TriggerUpdateStatusFailed"
+)
+
+func (r *Reconciler) reconcileTrigger(ctx context.Context, b *brokerv1beta1.Broker, t *brokerv1beta1.Trigger) error {
+	return nil
+}
+
+func (r *Reconciler) updateTriggerStatus(ctx context.Context, desired *brokerv1beta1.Trigger) (*brokerv1beta1.Trigger, error) {
 	trigger, err := r.triggerLister.Triggers(desired.Namespace).Get(desired.Name)
 	if err != nil {
 		return nil, err
@@ -44,20 +59,20 @@ func (r *Reconciler) updateTriggerStatus(ctx context.Context, desired *v1alpha1.
 	existing := trigger.DeepCopy()
 	existing.Status = desired.Status
 
-	trig, err := r.EventingClientSet.EventingV1alpha1().Triggers(desired.Namespace).UpdateStatus(existing)
+	trig, err := r.RunClientSet.EventingV1beta1().Triggers(desired.Namespace).UpdateStatus(existing)
 	if err == nil && becomesReady {
 		duration := time.Since(trig.ObjectMeta.CreationTimestamp.Time)
 		r.Logger.Infof("Trigger %q became ready after %v", trigger.Name, duration)
 		r.Recorder.Event(trigger, corev1.EventTypeNormal, triggerReadinessChanged, fmt.Sprintf("Trigger %q became ready", trigger.Name))
 		if err := r.StatsReporter.ReportReady("Trigger", trigger.Namespace, trigger.Name, duration); err != nil {
-			logging.FromContext(ctx).Sugar().Infof("failed to record ready for Trigger, %v", err)
+			logging.FromContext(ctx).Desugar().Info("failed to record ready for Trigger", zap.Error(err))
 		}
 	}
 
 	return trig, err
 }
 
-func (r *Reconciler) checkDependencyAnnotation(ctx context.Context, t *v1alpha1.Trigger, b *v1alpha1.Broker) error {
+func (r *Reconciler) checkDependencyAnnotation(ctx context.Context, t *brokerv1beta1.Trigger, b *brokerv1beta1.Broker) error {
 	if dependencyAnnotation, ok := t.GetAnnotations()[v1alpha1.DependencyAnnotation]; ok {
 		dependencyObjRef, err := v1alpha1.GetObjRefFromDependencyAnnotation(dependencyAnnotation)
 		if err != nil {
@@ -78,7 +93,7 @@ func (r *Reconciler) checkDependencyAnnotation(ctx context.Context, t *v1alpha1.
 	return nil
 }
 
-func (r *Reconciler) propagateDependencyReadiness(ctx context.Context, t *v1alpha1.Trigger, dependencyObjRef corev1.ObjectReference) error {
+func (r *Reconciler) propagateDependencyReadiness(ctx context.Context, t *brokerv1beta1.Trigger, dependencyObjRef corev1.ObjectReference) error {
 	lister, err := r.kresourceTracker.ListerFor(dependencyObjRef)
 	if err != nil {
 		t.Status.MarkDependencyUnknown("ListerDoesNotExist", "Failed to retrieve lister: %v", err)
@@ -98,7 +113,7 @@ func (r *Reconciler) propagateDependencyReadiness(ctx context.Context, t *v1alph
 	// The dependency hasn't yet reconciled our latest changes to
 	// its desired state, so its conditions are outdated.
 	if dependency.GetGeneration() != dependency.Status.ObservedGeneration {
-		logging.FromContext(ctx).Info("The ObjectMeta Generation of dependency is not equal to the observedGeneration of status",
+		logging.FromContext(ctx).Desugar().Info("The ObjectMeta Generation of dependency is not equal to the observedGeneration of status",
 			zap.Any("objectMetaGeneration", dependency.GetGeneration()),
 			zap.Any("statusObservedGeneration", dependency.Status.ObservedGeneration))
 		t.Status.MarkDependencyUnknown("GenerationNotEqual", "The dependency's metadata.generation, %q, is not equal to its status.observedGeneration, %q.", dependency.GetGeneration(), dependency.Status.ObservedGeneration)

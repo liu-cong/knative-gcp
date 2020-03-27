@@ -1,5 +1,5 @@
 /*
-Copyright 2020 The Knative Authors
+Copyright 2020 Google LLC
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -21,8 +21,8 @@ package trigger
 import (
 	context "context"
 
-	v1alpha1 "knative.dev/eventing/pkg/client/informers/externalversions/eventing/v1alpha1"
-	factory "knative.dev/eventing/pkg/client/injection/informers/factory"
+	v1beta1 "github.com/google/knative-gcp/pkg/client/informers/externalversions/broker/v1beta1"
+	factory "github.com/google/knative-gcp/pkg/client/injection/informers/factory"
 	controller "knative.dev/pkg/controller"
 	injection "knative.dev/pkg/injection"
 	logging "knative.dev/pkg/logging"
@@ -37,16 +37,16 @@ type Key struct{}
 
 func withInformer(ctx context.Context) (context.Context, controller.Informer) {
 	f := factory.Get(ctx)
-	inf := f.Eventing().V1alpha1().Triggers()
+	inf := f.Eventing().V1beta1().Triggers()
 	return context.WithValue(ctx, Key{}, inf), inf.Informer()
 }
 
 // Get extracts the typed informer from the context.
-func Get(ctx context.Context) v1alpha1.TriggerInformer {
+func Get(ctx context.Context) v1beta1.TriggerInformer {
 	untyped := ctx.Value(Key{})
 	if untyped == nil {
 		logging.FromContext(ctx).Panic(
-			"Unable to fetch knative.dev/eventing/pkg/client/informers/externalversions/eventing/v1alpha1.TriggerInformer from context.")
+			"Unable to fetch github.com/google/knative-gcp/pkg/client/informers/externalversions/broker/v1beta1.TriggerInformer from context.")
 	}
-	return untyped.(v1alpha1.TriggerInformer)
+	return untyped.(v1beta1.TriggerInformer)
 }

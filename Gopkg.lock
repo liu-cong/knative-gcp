@@ -1435,7 +1435,7 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:a199055e74bfd2dcf93743937b4d7dd9c8aaf996606f11bd9c18f709e2bfca9f"
+  digest = "1:311f9476170ba228762ee35c7388a268278bb3132d1c49527b4e4c5be724aab0"
   name = "knative.dev/eventing"
   packages = [
     "pkg/apis/config",
@@ -1498,7 +1498,6 @@
     "pkg/client/injection/client/fake",
     "pkg/client/injection/informers/eventing/v1alpha1/broker",
     "pkg/client/injection/informers/eventing/v1alpha1/broker/fake",
-    "pkg/client/injection/informers/eventing/v1alpha1/trigger",
     "pkg/client/injection/informers/factory",
     "pkg/client/injection/informers/factory/fake",
     "pkg/client/injection/reconciler/eventing/v1alpha1/broker",
@@ -1799,8 +1798,6 @@
     "knative.dev/eventing/pkg/apis/eventing/v1alpha1",
     "knative.dev/eventing/pkg/apis/eventing/v1beta1",
     "knative.dev/eventing/pkg/client/injection/informers/eventing/v1alpha1/broker/fake",
-    "knative.dev/eventing/pkg/client/injection/informers/eventing/v1alpha1/trigger",
-    "knative.dev/eventing/pkg/client/listers/eventing/v1alpha1",
     "knative.dev/eventing/pkg/duck",
     "knative.dev/eventing/pkg/kncloudevents",
     "knative.dev/eventing/pkg/logconfig",

@@ -48,6 +48,8 @@ type Subscription interface {
 	Update(ctx context.Context, cfg SubscriptionConfig) (SubscriptionConfig, error)
 	// Delete see https://godoc.org/cloud.google.com/go/pubsub#Subscription.Delete
 	Delete(ctx context.Context) error
+	// ID see https://godoc.org/cloud.google.com/go/pubsub#Subscription.ID
+	ID() string
 }
 
 // Client matches the interface exposed by pubsub.Topic
@@ -59,4 +61,6 @@ type Topic interface {
 	Delete(ctx context.Context) error
 	// IAM see https://godoc.org/cloud.google.com/go/pubsub#Topic.IAM
 	IAM() iam.Handle
+	// ID see https://godoc.org/cloud.google.com/go/pubsub#Topic.ID
+	ID() string
 }

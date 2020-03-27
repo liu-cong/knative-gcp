@@ -31,59 +31,59 @@ import (
 	cache "k8s.io/client-go/tools/cache"
 )
 
-// BrokerInformer provides access to a shared informer and lister for
-// Brokers.
-type BrokerInformer interface {
+// TriggerInformer provides access to a shared informer and lister for
+// Triggers.
+type TriggerInformer interface {
 	Informer() cache.SharedIndexInformer
-	Lister() v1beta1.BrokerLister
+	Lister() v1beta1.TriggerLister
 }
 
-type brokerInformer struct {
+type triggerInformer struct {
 	factory          internalinterfaces.SharedInformerFactory
 	tweakListOptions internalinterfaces.TweakListOptionsFunc
 	namespace        string
 }
 
-// NewBrokerInformer constructs a new informer for Broker type.
+// NewTriggerInformer constructs a new informer for Trigger type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
-func NewBrokerInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers) cache.SharedIndexInformer {
-	return NewFilteredBrokerInformer(client, namespace, resyncPeriod, indexers, nil)
+func NewTriggerInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers) cache.SharedIndexInformer {
+	return NewFilteredTriggerInformer(client, namespace, resyncPeriod, indexers, nil)
 }
 
-// NewFilteredBrokerInformer constructs a new informer for Broker type.
+// NewFilteredTriggerInformer constructs a new informer for Trigger type.
 // Always prefer using an informer factory to get a shared informer instead of getting an independent
 // one. This reduces memory footprint and number of connections to the server.
-func NewFilteredBrokerInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) cache.SharedIndexInformer {
+func NewFilteredTriggerInformer(client versioned.Interface, namespace string, resyncPeriod time.Duration, indexers cache.Indexers, tweakListOptions internalinterfaces.TweakListOptionsFunc) cache.SharedIndexInformer {
 	return cache.NewSharedIndexInformer(
 		&cache.ListWatch{
 			ListFunc: func(options v1.ListOptions) (runtime.Object, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.EventingV1beta1().Brokers(namespace).List(options)
+				return client.EventingV1beta1().Triggers(namespace).List(options)
 			},
 			WatchFunc: func(options v1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.EventingV1beta1().Brokers(namespace).Watch(options)
+				return client.EventingV1beta1().Triggers(namespace).Watch(options)
 			},
 		},
-		&brokerv1beta1.Broker{},
+		&brokerv1beta1.Trigger{},
 		resyncPeriod,
 		indexers,
 	)
 }
 
-func (f *brokerInformer) defaultInformer(client versioned.Interface, resyncPeriod time.Duration) cache.SharedIndexInformer {
-	return NewFilteredBrokerInformer(client, f.namespace, resyncPeriod, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, f.tweakListOptions)
+func (f *triggerInformer) defaultInformer(client versioned.Interface, resyncPeriod time.Duration) cache.SharedIndexInformer {
+	return NewFilteredTriggerInformer(client, f.namespace, resyncPeriod, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}, f.tweakListOptions)
 }
 
-func (f *brokerInformer) Informer() cache.SharedIndexInformer {
-	return f.factory.InformerFor(&brokerv1beta1.Broker{}, f.defaultInformer)
+func (f *triggerInformer) Informer() cache.SharedIndexInformer {
+	return f.factory.InformerFor(&brokerv1beta1.Trigger{}, f.defaultInformer)
 }
 
-func (f *brokerInformer) Lister() v1beta1.BrokerLister {
-	return v1beta1.NewBrokerLister(f.Informer().GetIndexer())
+func (f *triggerInformer) Lister() v1beta1.TriggerLister {
+	return v1beta1.NewTriggerLister(f.Informer().GetIndexer())
 }

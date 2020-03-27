@@ -24,22 +24,27 @@ import (
 	rest "k8s.io/client-go/rest"
 )
 
-type BrokerV1beta1Interface interface {
+type EventingV1beta1Interface interface {
 	RESTClient() rest.Interface
 	BrokersGetter
+	TriggersGetter
 }
 
-// BrokerV1beta1Client is used to interact with features provided by the broker group.
-type BrokerV1beta1Client struct {
+// EventingV1beta1Client is used to interact with features provided by the eventing.knative.dev group.
+type EventingV1beta1Client struct {
 	restClient rest.Interface
 }
 
-func (c *BrokerV1beta1Client) Brokers(namespace string) BrokerInterface {
+func (c *EventingV1beta1Client) Brokers(namespace string) BrokerInterface {
 	return newBrokers(c, namespace)
 }
 
-// NewForConfig creates a new BrokerV1beta1Client for the given config.
-func NewForConfig(c *rest.Config) (*BrokerV1beta1Client, error) {
+func (c *EventingV1beta1Client) Triggers(namespace string) TriggerInterface {
+	return newTriggers(c, namespace)
+}
+
+// NewForConfig creates a new EventingV1beta1Client for the given config.
+func NewForConfig(c *rest.Config) (*EventingV1beta1Client, error) {
 	config := *c
 	if err := setConfigDefaults(&config); err != nil {
 		return nil, err
@@ -48,12 +53,12 @@ func NewForConfig(c *rest.Config) (*BrokerV1beta1Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &BrokerV1beta1Client{client}, nil
+	return &EventingV1beta1Client{client}, nil
 }
 
-// NewForConfigOrDie creates a new BrokerV1beta1Client for the given config and
+// NewForConfigOrDie creates a new EventingV1beta1Client for the given config and
 // panics if there is an error in the config.
-func NewForConfigOrDie(c *rest.Config) *BrokerV1beta1Client {
+func NewForConfigOrDie(c *rest.Config) *EventingV1beta1Client {
 	client, err := NewForConfig(c)
 	if err != nil {
 		panic(err)
@@ -61,9 +66,9 @@ func NewForConfigOrDie(c *rest.Config) *BrokerV1beta1Client {
 	return client
 }
 
-// New creates a new BrokerV1beta1Client for the given RESTClient.
-func New(c rest.Interface) *BrokerV1beta1Client {
-	return &BrokerV1beta1Client{c}
+// New creates a new EventingV1beta1Client for the given RESTClient.
+func New(c rest.Interface) *EventingV1beta1Client {
+	return &EventingV1beta1Client{c}
 }
 
 func setConfigDefaults(config *rest.Config) error {
@@ -81,7 +86,7 @@ func setConfigDefaults(config *rest.Config) error {
 
 // RESTClient returns a RESTClient that is used to communicate
 // with API server by this client implementation.
-func (c *BrokerV1beta1Client) RESTClient() rest.Interface {
+func (c *EventingV1beta1Client) RESTClient() rest.Interface {
 	if c == nil {
 		return nil
 	}
