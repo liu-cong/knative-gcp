@@ -195,6 +195,7 @@ func (r *Reconciler) reconcileBroker(ctx context.Context, b *brokerv1beta1.Broke
 	if err := r.reconcileDecouplingTopicAndSub(ctx, b); err != nil {
 		return fmt.Errorf("Decoupling topic reconcile failed: %w", err)
 	}
+	//TODO pubsub conditions
 
 	return nil
 }
@@ -231,17 +232,18 @@ func (r *Reconciler) reconcileDecouplingTopicAndSub(ctx context.Context, b *brok
 	}
 
 	if !exists {
-		// topicConfig := &gpubsub.TopicConfig{
-		// 	Labels: map[string]string{
-		// 		"resource":    "brokers.eventing.knative.dev",
-		// 		"brokerClass": brokerv1beta1.BrokerClass,
-		// 		"namespace":   b.Namespace,
-		// 		"name":        b.Name,
-		// 		//TODO add resource labels
-		// 	},
-		// }
+		topicConfig := &gpubsub.TopicConfig{
+			Labels: map[string]string{
+				"resource":     "brokers",
+				"broker_class": brokerv1beta1.BrokerClass,
+				"namespace":    b.Namespace,
+				"name":         b.Name,
+				//TODO add resource labels, but need to be sanitized: https://cloud.google.com/pubsub/docs/labels#requirements
+			},
+		}
 		// Create a new topic.
-		t, err = client.CreateTopic(ctx, topicID)
+		logger.Debug("Creating topic with cfg", zap.String("id", topicID), zap.Any("cfg", topicConfig))
+		t, err = client.CreateTopicWithConfig(ctx, topicID, topicConfig)
 		if err != nil {
 			// For some reason (maybe some cache invalidation thing), sometimes t.Exists returns that the topic
 			// doesn't exist but it actually does. When we try to create it again, it fails with an AlreadyExists
@@ -272,18 +274,19 @@ func (r *Reconciler) reconcileDecouplingTopicAndSub(ctx context.Context, b *brok
 	if !subExists {
 		subConfig := gpubsub.SubscriptionConfig{
 			Topic: t,
-			// Labels: map[string]string{
-			// 	"resource":    "brokers.eventing.knative.dev",
-			// 	"brokerClass": brokerv1beta1.BrokerClass,
-			// 	"namespace":   b.Namespace,
-			// 	"name":        b.Name,
-			// 	//TODO add resource labels
-			// },
+			Labels: map[string]string{
+				"resource":     "brokers",
+				"broker_class": brokerv1beta1.BrokerClass,
+				"namespace":    b.Namespace,
+				"name":         b.Name,
+				//TODO add resource labels, but need to be sanitized: https://cloud.google.com/pubsub/docs/labels#requirements
+			},
 			//TODO(grantr): configure these settings?
 			// AckDeadline
 			// RetentionDuration
 		}
 		// Create a new subscription to the previous topic with the given name.
+		logger.Debug("Creating sub with cfg", zap.String("id", subID), zap.Any("cfg", subConfig))
 		sub, err = client.CreateSubscription(ctx, subID, subConfig)
 		if err != nil {
 			logger.Error("Failed to create subscription", zap.Error(err))

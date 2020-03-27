@@ -40,6 +40,7 @@ const (
 )
 
 func (r *Reconciler) reconcileTrigger(ctx context.Context, b *brokerv1beta1.Broker, t *brokerv1beta1.Trigger) error {
+	//TODO
 	return nil
 }
 
