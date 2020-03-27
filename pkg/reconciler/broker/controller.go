@@ -32,6 +32,7 @@ import (
 	"knative.dev/eventing/pkg/duck"
 	"knative.dev/pkg/client/injection/ducks/duck/v1/addressable"
 	"knative.dev/pkg/client/injection/ducks/duck/v1/conditions"
+	configmapinformer "knative.dev/pkg/client/injection/kube/informers/core/v1/configmap"
 	endpointsinformer "knative.dev/pkg/client/injection/kube/informers/core/v1/endpoints"
 	"knative.dev/pkg/configmap"
 	"knative.dev/pkg/controller"
@@ -50,13 +51,14 @@ const (
 func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl {
 	brokerInformer := brokerinformer.Get(ctx)
 	triggerInformer := triggerinformer.Get(ctx)
+	configMapInformer := configmapinformer.Get(ctx)
 	endpointsInformer := endpointsinformer.Get(ctx)
-	//TODO configmap informer for data plane configmaps
 
 	r := &Reconciler{
 		Base:            reconciler.NewBase(ctx, controllerAgentName, cmw),
 		brokerLister:    brokerInformer.Lister(),
 		triggerLister:   triggerInformer.Lister(),
+		configMapLister: configmapInformer.Lister(),
 		endpointsLister: endpointsInformer.Lister(),
 		CreateClientFn:  gpubsub.NewClient,
 		brokerClass:     brokerv1beta1.BrokerClass,
@@ -74,7 +76,13 @@ func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl 
 		Handler:    controller.HandleAll(impl.Enqueue),
 	})
 
+	configMapInformer.Informer().AddEventHandler(cache.FilteringResourceEventHandler{
+		FilterFunc: pkgreconciler.LabelExistsFilterFunc(eventing.BrokerLabelKey),
+		Handler:    controller.HandleAll(impl.EnqueueLabelOfNamespaceScopedResource("" /*any namespace*/, eventing.BrokerLabelKey)),
+	})
+
 	//TODO https://github.com/knative/eventing/pull/2779/files
+	//TODO this won't work if there's a shared service
 	endpointsInformer.Informer().AddEventHandler(cache.FilteringResourceEventHandler{
 		FilterFunc: pkgreconciler.LabelExistsFilterFunc(eventing.BrokerLabelKey),
 		Handler:    controller.HandleAll(impl.EnqueueLabelOfNamespaceScopedResource("" /*any namespace*/, eventing.BrokerLabelKey)),

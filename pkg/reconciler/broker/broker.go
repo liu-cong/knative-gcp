@@ -61,8 +61,9 @@ type Reconciler struct {
 
 	// listers index properties about resources
 	brokerLister    brokerlisters.BrokerLister
-	endpointsLister corev1listers.EndpointsLister
 	triggerLister   brokerlisters.TriggerLister
+	configMapLister corev1listers.ConfigMapLister
+	endpointsLister corev1listers.EndpointsLister
 
 	// Dynamic tracker to track KResources. It tracks the dependency between Triggers and Sources.
 	kresourceTracker duck.ListableTracker
@@ -76,7 +77,7 @@ type Reconciler struct {
 	CreateClientFn gpubsub.CreateFn
 
 	// If specified, only reconcile brokers with these labels
-	//TODO(grantr): seems to be unused in MT broker?
+	//TODO(grantr): seems to be unused?
 	brokerClass string
 }
 
@@ -320,7 +321,11 @@ func (r *Reconciler) reconcileTriggers(ctx context.Context, b *brokerv1beta1.Bro
 			trigger := t.DeepCopy()
 			logger := logging.FromContext(ctx).With(zap.String("trigger", t.Name), zap.String("broker", b.Name))
 			ctx = logging.WithLogger(ctx, logger)
+
+			//TODO add finalizer to trigger and skip
+
 			tErr := r.reconcileTrigger(ctx, b, trigger)
+
 			if tErr != nil {
 				logger.Error("Reconciling trigger failed:", zap.Error(err))
 				r.Recorder.Eventf(trigger, corev1.EventTypeWarning, triggerReconcileFailed, "Trigger reconcile failed: %v", tErr)
