@@ -23,7 +23,11 @@ import (
 	"time"
 
 	brokerv1beta1 "github.com/google/knative-gcp/pkg/apis/broker/v1beta1"
+	gpubsub "github.com/google/knative-gcp/pkg/gclient/pubsub"
+	"github.com/google/knative-gcp/pkg/reconciler/broker/resources"
+	"github.com/google/knative-gcp/pkg/utils"
 	"go.uber.org/zap"
+	gstatus "google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	"knative.dev/eventing/pkg/apis/eventing/v1alpha1"
@@ -40,7 +44,141 @@ const (
 )
 
 func (r *Reconciler) reconcileTrigger(ctx context.Context, b *brokerv1beta1.Broker, t *brokerv1beta1.Trigger) error {
-	//TODO
+	logger := logging.FromContext(ctx).Desugar()
+	t.Status.InitializeConditions()
+
+	if t.DeletionTimestamp != nil {
+		// TODO finalize by deleting topic/sub
+		return nil
+	}
+
+	//t.Status.PropagateBrokerStatus(b.Status)
+
+	if t.Spec.Subscriber.Ref != nil {
+		// To call URIFromDestination(dest apisv1alpha1.Destination, parent interface{}), dest.Ref must have a Namespace
+		// We will use the Namespace of Trigger as the Namespace of dest.Ref
+		t.Spec.Subscriber.Ref.Namespace = t.GetNamespace()
+	}
+
+	subscriberURI, err := r.uriResolver.URIFromDestinationV1(t.Spec.Subscriber, b)
+	if err != nil {
+		logger.Error("Unable to get the Subscriber's URI", zap.Error(err))
+		t.Status.MarkSubscriberResolvedFailed("Unable to get the Subscriber's URI", "%v", err)
+		t.Status.SubscriberURI = nil
+		return err
+	}
+	t.Status.SubscriberURI = subscriberURI
+	t.Status.MarkSubscriberResolvedSucceeded()
+
+	if err := r.reconcileRetryTopicAndSubscription(ctx, t); err != nil {
+		return err
+	}
+
+	if err := r.checkDependencyAnnotation(ctx, t, b); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (r *Reconciler) reconcileRetryTopicAndSubscription(ctx context.Context, trig *brokerv1beta1.Trigger) error {
+	logger := logging.FromContext(ctx).Desugar()
+	logger.Debug("Reconciling retry topic")
+	// get ProjectID from config or metadata
+	//TODO(grantr) support configuring project in broker config
+	projectID, err := utils.ProjectID("")
+	if err != nil {
+		logger.Error("Failed to find project id", zap.Error(err))
+		return err
+	}
+	// Set the projectID in the status.
+	trig.Status.ProjectID = projectID
+
+	// Auth to GCP is handled by having the GOOGLE_APPLICATION_CREDENTIALS environment variable
+	// pointing at a credential file.
+	client, err := r.CreateClientFn(ctx, projectID)
+	if err != nil {
+		logger.Error("Failed to create Pub/Sub client", zap.Error(err))
+		return err
+	}
+	defer client.Close()
+
+	// Check if topic exists, and if not, create it.
+	topicID := resources.GenerateRetryTopicName(trig)
+	topic := client.Topic(topicID)
+	exists, err := topic.Exists(ctx)
+	if err != nil {
+		logger.Error("Failed to verify Pub/Sub topic exists", zap.Error(err))
+		return err
+	}
+
+	if !exists {
+		topicConfig := &gpubsub.TopicConfig{
+			Labels: map[string]string{
+				"resource":  "triggers",
+				"namespace": trig.Namespace,
+				"name":      trig.Name,
+				//TODO add resource labels, but need to be sanitized: https://cloud.google.com/pubsub/docs/labels#requirements
+			},
+		}
+		// Create a new topic.
+		logger.Debug("Creating topic with cfg", zap.String("id", topicID), zap.Any("cfg", topicConfig))
+		topic, err = client.CreateTopicWithConfig(ctx, topicID, topicConfig)
+		if err != nil {
+			// For some reason (maybe some cache invalidation thing), sometimes t.Exists returns that the topic
+			// doesn't exist but it actually does. When we try to create it again, it fails with an AlreadyExists
+			// reason. We check for that error here. If it happens, then return nil.
+			if _, ok := gstatus.FromError(err); !ok {
+				logger.Error("Failed from Pub/Sub client while creating topic", zap.Error(err))
+				return err
+			}
+			logger.Error("Failed to create Pub/Sub topic", zap.Error(err))
+			return err
+		}
+		logger.Info("Created PubSub topic", zap.String("name", topic.ID()))
+		r.Recorder.Eventf(trig, corev1.EventTypeNormal, topicCreated, "Created PubSub topic %q", topic.ID())
+	}
+
+	// TODO(grantr): this isn't actually persisted due to webhook issues.
+	trig.Status.TopicID = topic.ID()
+
+	// Check if PullSub exists, and if not, create it.
+	subID := resources.GenerateRetrySubscriptionName(trig)
+	sub := client.Subscription(subID)
+	subExists, err := sub.Exists(ctx)
+	if err != nil {
+		logger.Error("Failed to verify Pub/Sub subscription exists", zap.Error(err))
+		return err
+	}
+
+	if !subExists {
+		subConfig := gpubsub.SubscriptionConfig{
+			Topic: topic,
+			Labels: map[string]string{
+				"resource":  "triggers",
+				"namespace": trig.Namespace,
+				"name":      trig.Name,
+				//TODO add resource labels, but need to be sanitized: https://cloud.google.com/pubsub/docs/labels#requirements
+			},
+			//TODO(grantr): configure these settings?
+			// AckDeadline
+			// RetentionDuration
+		}
+		// Create a new subscription to the previous topic with the given name.
+		logger.Debug("Creating sub with cfg", zap.String("id", subID), zap.Any("cfg", subConfig))
+		sub, err = client.CreateSubscription(ctx, subID, subConfig)
+		if err != nil {
+			logger.Error("Failed to create subscription", zap.Error(err))
+			return err
+		}
+		logger.Info("Created PubSub subscription", zap.String("name", sub.ID()))
+		r.Recorder.Eventf(trig, corev1.EventTypeNormal, subCreated, "Created PubSub subscription %q", sub.ID())
+	}
+	//TODO update the subscription's config if needed.
+
+	// TODO(grantr): this isn't actually persisted due to webhook issues.
+	trig.Status.SubscriptionID = sub.ID()
+
 	return nil
 }
 

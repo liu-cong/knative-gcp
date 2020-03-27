@@ -105,7 +105,7 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, b *brokerv1beta1.Broker)
 	// whatever info is available. This should all be in the same configmap
 	// so it's transactional.
 
-	if false { //TODO b.Status.IsReady() {
+	if true { //TODO b.Status.IsReady() {
 		// So, at this point the Broker is ready and everything should be solid
 		// for the triggers to act upon, so reconcile them.
 		te := r.reconcileTriggers(ctx, b)
@@ -124,7 +124,7 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, b *brokerv1beta1.Broker)
 
 func (r *Reconciler) FinalizeKind(ctx context.Context, b *brokerv1beta1.Broker) pkgreconciler.Event {
 	logger := logging.FromContext(ctx).Desugar()
-	logger.Debug("Finalizing Broker", zap.Any("broker", b))
+	logger.Debug("Finalizing Broker")
 	// get ProjectID from config or metadata
 	//TODO(grantr) support configuring project in broker config
 	projectID, err := utils.ProjectID("")
@@ -143,19 +143,19 @@ func (r *Reconciler) FinalizeKind(ctx context.Context, b *brokerv1beta1.Broker) 
 	// Delete topic if it exists. Pull subscriptions continue pulling from the
 	// topic until deleted themselves.
 	topicID := resources.GenerateDecouplingTopicName(b)
-	t := client.Topic(topicID)
-	exists, err := t.Exists(ctx)
+	topic := client.Topic(topicID)
+	exists, err := topic.Exists(ctx)
 	if err != nil {
 		logger.Error("Failed to verify Pub/Sub topic exists", zap.Error(err))
 		return err
 	}
 	if exists {
-		if err := t.Delete(ctx); err != nil {
+		if err := topic.Delete(ctx); err != nil {
 			logger.Error("Failed to delete Pub/Sub topic", zap.Error(err))
 			return err
 		}
-		logger.Info("Deleted PubSub topic", zap.String("name", t.ID()))
-		r.Recorder.Eventf(b, corev1.EventTypeNormal, topicDeleted, "Deleted PubSub topic %q", t.ID())
+		logger.Info("Deleted PubSub topic", zap.String("name", topic.ID()))
+		r.Recorder.Eventf(b, corev1.EventTypeNormal, topicDeleted, "Deleted PubSub topic %q", topic.ID())
 	}
 
 	// Delete pull subscription if it exists.
@@ -177,7 +177,7 @@ func (r *Reconciler) FinalizeKind(ctx context.Context, b *brokerv1beta1.Broker) 
 		r.Recorder.Eventf(b, corev1.EventTypeNormal, subDeleted, "Deleted PubSub subscription %q", sub.ID())
 	}
 
-	// Update triggers to have a missing broker and be unready.
+	// Update triggers to have a missing broker (and become unready).
 	if err := r.propagateBrokerStatusToTriggers(ctx, b.Namespace, b.Name, nil); err != nil {
 		return fmt.Errorf("Trigger reconcile failed: %v", err)
 	}
@@ -202,7 +202,7 @@ func (r *Reconciler) reconcileBroker(ctx context.Context, b *brokerv1beta1.Broke
 
 func (r *Reconciler) reconcileDecouplingTopicAndSub(ctx context.Context, b *brokerv1beta1.Broker) pkgreconciler.Event {
 	logger := logging.FromContext(ctx).Desugar()
-	logger.Debug("Reconciling decoupling topic", zap.Any("Broker", b))
+	logger.Debug("Reconciling decoupling topic")
 	// get ProjectID from config or metadata
 	//TODO(grantr) support configuring project in broker config
 	projectID, err := utils.ProjectID("")
@@ -215,7 +215,7 @@ func (r *Reconciler) reconcileDecouplingTopicAndSub(ctx context.Context, b *brok
 
 	// Auth to GCP is handled by having the GOOGLE_APPLICATION_CREDENTIALS environment variable
 	// pointing at a credential file.
-	client, err := r.CreateClientFn(ctx, b.Status.ProjectID)
+	client, err := r.CreateClientFn(ctx, projectID)
 	if err != nil {
 		logger.Error("Failed to create Pub/Sub client", zap.Error(err))
 		return err
@@ -224,8 +224,8 @@ func (r *Reconciler) reconcileDecouplingTopicAndSub(ctx context.Context, b *brok
 
 	// Check if topic exists, and if not, create it.
 	topicID := resources.GenerateDecouplingTopicName(b)
-	t := client.Topic(topicID)
-	exists, err := t.Exists(ctx)
+	topic := client.Topic(topicID)
+	exists, err := topic.Exists(ctx)
 	if err != nil {
 		logger.Error("Failed to verify Pub/Sub topic exists", zap.Error(err))
 		return err
@@ -243,7 +243,7 @@ func (r *Reconciler) reconcileDecouplingTopicAndSub(ctx context.Context, b *brok
 		}
 		// Create a new topic.
 		logger.Debug("Creating topic with cfg", zap.String("id", topicID), zap.Any("cfg", topicConfig))
-		t, err = client.CreateTopicWithConfig(ctx, topicID, topicConfig)
+		topic, err = client.CreateTopicWithConfig(ctx, topicID, topicConfig)
 		if err != nil {
 			// For some reason (maybe some cache invalidation thing), sometimes t.Exists returns that the topic
 			// doesn't exist but it actually does. When we try to create it again, it fails with an AlreadyExists
@@ -255,12 +255,12 @@ func (r *Reconciler) reconcileDecouplingTopicAndSub(ctx context.Context, b *brok
 			logger.Error("Failed to create Pub/Sub topic", zap.Error(err))
 			return err
 		}
-		logger.Info("Created PubSub topic", zap.String("name", t.ID()))
-		r.Recorder.Eventf(b, corev1.EventTypeNormal, topicCreated, "Created PubSub topic %q", t.ID())
+		logger.Info("Created PubSub topic", zap.String("name", topic.ID()))
+		r.Recorder.Eventf(b, corev1.EventTypeNormal, topicCreated, "Created PubSub topic %q", topic.ID())
 	}
 
 	// TODO(grantr): this isn't actually persisted due to webhook issues.
-	b.Status.TopicID = t.ID()
+	b.Status.TopicID = topic.ID()
 
 	// Check if PullSub exists, and if not, create it.
 	subID := resources.GenerateDecouplingSubscriptionName(b)
@@ -273,7 +273,7 @@ func (r *Reconciler) reconcileDecouplingTopicAndSub(ctx context.Context, b *brok
 
 	if !subExists {
 		subConfig := gpubsub.SubscriptionConfig{
-			Topic: t,
+			Topic: topic,
 			Labels: map[string]string{
 				"resource":     "brokers",
 				"broker_class": brokerv1beta1.BrokerClass,
@@ -318,9 +318,11 @@ func (r *Reconciler) reconcileTriggers(ctx context.Context, b *brokerv1beta1.Bro
 	for _, t := range triggers {
 		if t.Spec.Broker == b.Name {
 			trigger := t.DeepCopy()
+			logger := logging.FromContext(ctx).With(zap.String("trigger", t.Name), zap.String("broker", b.Name))
+			ctx = logging.WithLogger(ctx, logger)
 			tErr := r.reconcileTrigger(ctx, b, trigger)
 			if tErr != nil {
-				r.Logger.Error("Reconciling trigger failed:", zap.String("name", t.Name), zap.Error(err))
+				logger.Error("Reconciling trigger failed:", zap.Error(err))
 				r.Recorder.Eventf(trigger, corev1.EventTypeWarning, triggerReconcileFailed, "Trigger reconcile failed: %v", tErr)
 			} else {
 				r.Recorder.Event(trigger, corev1.EventTypeNormal, triggerReconciled, "Trigger reconciled")

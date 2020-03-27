@@ -26,12 +26,21 @@ import (
 // Broker.
 func GenerateDecouplingTopicName(b *v1beta1.Broker) string {
 	return fmt.Sprintf("cre-b-%s-%s-%s", b.Namespace, b.Name, string(b.UID))
-	//return fmt.Sprintf("%s", b.Name)
 }
 
 // GenerateDecouplingSubscriptionName generates a deterministic subscription
 // name for a Broker.
 func GenerateDecouplingSubscriptionName(b *v1beta1.Broker) string {
 	return fmt.Sprintf("cre-b-%s-%s-%s", b.Namespace, b.Name, string(b.UID))
-	//return fmt.Sprintf("%s", b.Name)
+}
+
+// GenerateRetryTopicName generates a deterministic topic name for a Trigger.
+func GenerateRetryTopicName(t *v1beta1.Trigger) string {
+	return fmt.Sprintf("cre-t-%s-%s-%s", t.Namespace, t.Name, string(t.UID))
+}
+
+// GenerateRetrySubscriptionName generates a deterministic subscription name
+// for a Trigger.
+func GenerateRetrySubscriptionName(t *v1beta1.Trigger) string {
+	return fmt.Sprintf("cre-t-%s-%s-%s", t.Namespace, t.Name, string(t.UID))
 }

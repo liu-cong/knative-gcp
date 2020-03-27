@@ -28,7 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/cache"
 	"knative.dev/eventing/pkg/apis/eventing"
-	"knative.dev/eventing/pkg/apis/eventing/v1beta1"
+	eventingv1beta1 "knative.dev/eventing/pkg/apis/eventing/v1beta1"
 	"knative.dev/eventing/pkg/duck"
 	"knative.dev/pkg/client/injection/ducks/duck/v1/addressable"
 	"knative.dev/pkg/client/injection/ducks/duck/v1/conditions"
@@ -65,14 +65,12 @@ func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl 
 
 	r.Logger.Info("Setting up event handlers")
 
-	// TODO(you): Set up event handlers.
-
 	r.kresourceTracker = duck.NewListableTracker(ctx, conditions.Get, impl.EnqueueKey, controller.GetTrackerLease(ctx))
 	r.addressableTracker = duck.NewListableTracker(ctx, addressable.Get, impl.EnqueueKey, controller.GetTrackerLease(ctx))
 	r.uriResolver = resolver.NewURIResolver(ctx, impl.EnqueueKey)
 
 	brokerInformer.Informer().AddEventHandler(cache.FilteringResourceEventHandler{
-		FilterFunc: pkgreconciler.AnnotationFilterFunc(v1beta1.BrokerClassAnnotationKey, brokerv1beta1.BrokerClass, false /*allowUnset*/),
+		FilterFunc: pkgreconciler.AnnotationFilterFunc(eventingv1beta1.BrokerClassAnnotationKey, brokerv1beta1.BrokerClass, false /*allowUnset*/),
 		Handler:    controller.HandleAll(impl.Enqueue),
 	})
 
@@ -84,7 +82,7 @@ func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl 
 
 	triggerInformer.Informer().AddEventHandler(controller.HandleAll(
 		func(obj interface{}) {
-			if trigger, ok := obj.(*v1beta1.Trigger); ok {
+			if trigger, ok := obj.(*brokerv1beta1.Trigger); ok {
 				impl.EnqueueKey(types.NamespacedName{Namespace: trigger.Namespace, Name: trigger.Spec.Broker})
 			}
 		},
