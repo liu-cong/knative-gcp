@@ -25,6 +25,7 @@ import (
 	brokerlisters "github.com/google/knative-gcp/pkg/client/listers/broker/v1beta1"
 	gpubsub "github.com/google/knative-gcp/pkg/gclient/pubsub"
 	"github.com/google/knative-gcp/pkg/reconciler"
+	"github.com/google/knative-gcp/pkg/reconciler/broker/resources"
 	"github.com/google/knative-gcp/pkg/utils"
 	"go.uber.org/zap"
 	gstatus "google.golang.org/grpc/status"
@@ -123,65 +124,57 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, b *brokerv1beta1.Broker)
 
 func (r *Reconciler) FinalizeKind(ctx context.Context, b *brokerv1beta1.Broker) pkgreconciler.Event {
 	logger := logging.FromContext(ctx).Desugar()
-
-	//HACKHACKHACK
-	b.Status.TopicID = "TODOchildname"
-	b.Status.SubscriptionID = "TODOchildname"
-
-	// Delete topic. Pull subscriptions continue pulling from the topic until deleted themselves.
-	if b.Status.TopicID != "" {
-		// At this point the project ID should have been populated in the status.
-		// Querying Pub/Sub as the topic could have been deleted outside the cluster (e.g, through gcloud).
-		client, err := r.CreateClientFn(ctx, b.Status.ProjectID)
-		if err != nil {
-			logger.Error("Failed to create Pub/Sub client", zap.Error(err))
-			return err
-		}
-		defer client.Close()
-
-		t := client.Topic(b.Status.TopicID)
-		exists, err := t.Exists(ctx)
-		if err != nil {
-			logger.Error("Failed to verify Pub/Sub topic exists", zap.Error(err))
-			return err
-		}
-		if exists {
-			if err := t.Delete(ctx); err != nil {
-				logger.Error("Failed to delete Pub/Sub topic", zap.Error(err))
-				return err
-			}
-			logger.Info("Deleted PubSub topic", zap.String("name", t.ID()))
-			r.Recorder.Eventf(b, corev1.EventTypeNormal, topicDeleted, "Deleted PubSub topic %q", t.ID())
-		}
+	logger.Debug("Finalizing Broker", zap.Any("broker", b))
+	// get ProjectID from config or metadata
+	//TODO(grantr) support configuring project in broker config
+	projectID, err := utils.ProjectID("")
+	if err != nil {
+		logger.Error("Failed to find project id", zap.Error(err))
+		return err
 	}
 
-	// Delete pull subscription.
+	client, err := r.CreateClientFn(ctx, projectID)
+	if err != nil {
+		logger.Error("Failed to create Pub/Sub client", zap.Error(err))
+		return err
+	}
+	defer client.Close()
+
+	// Delete topic if it exists. Pull subscriptions continue pulling from the
+	// topic until deleted themselves.
+	topicID := resources.GenerateDecouplingTopicName(b)
+	t := client.Topic(topicID)
+	exists, err := t.Exists(ctx)
+	if err != nil {
+		logger.Error("Failed to verify Pub/Sub topic exists", zap.Error(err))
+		return err
+	}
+	if exists {
+		if err := t.Delete(ctx); err != nil {
+			logger.Error("Failed to delete Pub/Sub topic", zap.Error(err))
+			return err
+		}
+		logger.Info("Deleted PubSub topic", zap.String("name", t.ID()))
+		r.Recorder.Eventf(b, corev1.EventTypeNormal, topicDeleted, "Deleted PubSub topic %q", t.ID())
+	}
+
+	// Delete pull subscription if it exists.
 	// TODO could alternately set expiration policy to make pubsub delete it after some idle time.
 	// https://cloud.google.com/pubsub/docs/admin#deleting_a_topic
-	if b.Status.SubscriptionID != "" {
-		// At this point the project ID should have been populated in the status.
-		// Querying Pub/Sub as the subscription could have been deleted outside the cluster (e.g, through gcloud).
-		client, err := r.CreateClientFn(ctx, b.Status.ProjectID)
-		if err != nil {
-			logger.Error("Failed to create Pub/Sub client", zap.Error(err))
+	subID := resources.GenerateDecouplingSubscriptionName(b)
+	sub := client.Subscription(subID)
+	exists, err = sub.Exists(ctx)
+	if err != nil {
+		logger.Error("Failed to verify Pub/Sub subscription exists", zap.Error(err))
+		return err
+	}
+	if exists {
+		if err := sub.Delete(ctx); err != nil {
+			logger.Error("Failed to delete Pub/Sub subscription", zap.Error(err))
 			return err
 		}
-		defer client.Close()
-
-		sub := client.Subscription(b.Status.SubscriptionID)
-		exists, err := sub.Exists(ctx)
-		if err != nil {
-			logger.Error("Failed to verify Pub/Sub subscription exists", zap.Error(err))
-			return err
-		}
-		if exists {
-			if err := sub.Delete(ctx); err != nil {
-				logger.Error("Failed to delete Pub/Sub subscription", zap.Error(err))
-				return err
-			}
-			logger.Info("Deleted PubSub subscription", zap.String("name", sub.ID()))
-			r.Recorder.Eventf(b, corev1.EventTypeNormal, subDeleted, "Deleted PubSub subscription %q", sub.ID())
-		}
+		logger.Info("Deleted PubSub subscription", zap.String("name", sub.ID()))
+		r.Recorder.Eventf(b, corev1.EventTypeNormal, subDeleted, "Deleted PubSub subscription %q", sub.ID())
 	}
 
 	// Update triggers to have a missing broker and be unready.
@@ -193,14 +186,12 @@ func (r *Reconciler) FinalizeKind(ctx context.Context, b *brokerv1beta1.Broker) 
 
 func (r *Reconciler) reconcileBroker(ctx context.Context, b *brokerv1beta1.Broker) pkgreconciler.Event {
 	logger := logging.FromContext(ctx).Desugar()
-	logger.Debug("Reconciling", zap.Any("Broker", b))
+	logger.Debug("Reconciling Broker", zap.Any("broker", b))
 	//TODO b.Status.InitializeConditions()
 	b.Status.ObservedGeneration = b.Generation
 
 	// Create decoupling topic and pullsub for this broker. Ingress will push
-	// to this topic and fanout will pull.
-	// NOTE(grantr): This code can co-exist with a shared decoupling topic.
-	// If we use a shared one, this topic and its sub will sit idle with zero cost.
+	// to this topic and fanout will pull from the pull sub.
 	if err := r.reconcileDecouplingTopicAndSub(ctx, b); err != nil {
 		return fmt.Errorf("Decoupling topic reconcile failed: %w", err)
 	}
@@ -211,17 +202,15 @@ func (r *Reconciler) reconcileBroker(ctx context.Context, b *brokerv1beta1.Broke
 func (r *Reconciler) reconcileDecouplingTopicAndSub(ctx context.Context, b *brokerv1beta1.Broker) pkgreconciler.Event {
 	logger := logging.FromContext(ctx).Desugar()
 	logger.Debug("Reconciling decoupling topic", zap.Any("Broker", b))
-	// set ProjectID from config or metadata
-	if b.Status.ProjectID == "" {
-		//TODO support passing in project
-		projectID, err := utils.ProjectID("")
-		if err != nil {
-			logger.Error("Failed to find project id", zap.Error(err))
-			return err
-		}
-		// Set the projectID in the status.
-		b.Status.ProjectID = projectID
+	// get ProjectID from config or metadata
+	//TODO(grantr) support configuring project in broker config
+	projectID, err := utils.ProjectID("")
+	if err != nil {
+		logger.Error("Failed to find project id", zap.Error(err))
+		return err
 	}
+	// Set the projectID in the status.
+	b.Status.ProjectID = projectID
 
 	// Auth to GCP is handled by having the GOOGLE_APPLICATION_CREDENTIALS environment variable
 	// pointing at a credential file.
@@ -233,11 +222,7 @@ func (r *Reconciler) reconcileDecouplingTopicAndSub(ctx context.Context, b *brok
 	defer client.Close()
 
 	// Check if topic exists, and if not, create it.
-	topicID := b.Status.TopicID
-	if topicID == "" {
-		topicID = "TODOchildname"
-	}
-
+	topicID := resources.GenerateDecouplingTopicName(b)
 	t := client.Topic(topicID)
 	exists, err := t.Exists(ctx)
 	if err != nil {
@@ -246,6 +231,15 @@ func (r *Reconciler) reconcileDecouplingTopicAndSub(ctx context.Context, b *brok
 	}
 
 	if !exists {
+		// topicConfig := &gpubsub.TopicConfig{
+		// 	Labels: map[string]string{
+		// 		"resource":    "brokers.eventing.knative.dev",
+		// 		"brokerClass": brokerv1beta1.BrokerClass,
+		// 		"namespace":   b.Namespace,
+		// 		"name":        b.Name,
+		// 		//TODO add resource labels
+		// 	},
+		// }
 		// Create a new topic.
 		t, err = client.CreateTopic(ctx, topicID)
 		if err != nil {
@@ -263,14 +257,11 @@ func (r *Reconciler) reconcileDecouplingTopicAndSub(ctx context.Context, b *brok
 		r.Recorder.Eventf(b, corev1.EventTypeNormal, topicCreated, "Created PubSub topic %q", t.ID())
 	}
 
+	// TODO(grantr): this isn't actually persisted due to webhook issues.
 	b.Status.TopicID = t.ID()
 
 	// Check if PullSub exists, and if not, create it.
-	subID := b.Status.SubscriptionID
-	if subID == "" {
-		subID = "TODOchildname"
-	}
-
+	subID := resources.GenerateDecouplingSubscriptionName(b)
 	sub := client.Subscription(subID)
 	subExists, err := sub.Exists(ctx)
 	if err != nil {
@@ -281,6 +272,13 @@ func (r *Reconciler) reconcileDecouplingTopicAndSub(ctx context.Context, b *brok
 	if !subExists {
 		subConfig := gpubsub.SubscriptionConfig{
 			Topic: t,
+			// Labels: map[string]string{
+			// 	"resource":    "brokers.eventing.knative.dev",
+			// 	"brokerClass": brokerv1beta1.BrokerClass,
+			// 	"namespace":   b.Namespace,
+			// 	"name":        b.Name,
+			// 	//TODO add resource labels
+			// },
 			//TODO(grantr): configure these settings?
 			// AckDeadline
 			// RetentionDuration
@@ -295,6 +293,8 @@ func (r *Reconciler) reconcileDecouplingTopicAndSub(ctx context.Context, b *brok
 		r.Recorder.Eventf(b, corev1.EventTypeNormal, subCreated, "Created PubSub subscription %q", sub.ID())
 	}
 	//TODO update the subscription's config if needed.
+
+	// TODO(grantr): this isn't actually persisted due to webhook issues.
 	b.Status.SubscriptionID = sub.ID()
 
 	return nil

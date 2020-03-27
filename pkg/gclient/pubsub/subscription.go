@@ -24,7 +24,7 @@ import (
 )
 
 // SubscriptionConfig re-implements pubsub.SubscriptionConfig to allow us to
-// use a wrapped Topic internally.
+// use a wrapped Subscription internally.
 type SubscriptionConfig struct {
 	Topic               Topic
 	AckDeadline         time.Duration

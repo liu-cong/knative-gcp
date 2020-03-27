@@ -25,6 +25,10 @@ import (
 	"knative.dev/pkg/kmeta"
 )
 
+const (
+	BrokerClass = "gcp"
+)
+
 // +genclient
 // +genreconciler
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
@@ -64,22 +68,16 @@ var (
 
 // BrokerStatus represents the current state of a Broker.
 type BrokerStatus struct {
-	// inherits core eventing BrokerStatus.
-	//TODO it may not be possible to import this type because it will conflict with our alternate
-	// type for Broker in the global scheme.
+	// Inherits core eventing BrokerStatus.
+	// even with this change, the webhook seems to drop unknown fields. May need to alter the mutating webhook.
 	eventingv1beta1.BrokerStatus `json:",inline"`
-	/*
-		// inherits duck/v1 Status, which currently provides:
-		// * ObservedGeneration - the 'Generation' of the Service that was last processed by the controller.
-		// * Conditions - the latest available observations of a resource's current state.
-		duckv1.Status `json:",inline"`
 
-		// Broker is Addressable. It exposes the endpoint as an URI to get events
-		// delivered into the Broker mesh.
-		Address duckv1.Addressable `json:"address,omitempty"`
-	*/
+	//TODO these fields don't work yet.
+	//TODO this requires updating the eventing webhook to allow unknown fields. Since the only unknown
+	// fields required are in status, maybe we can use a separate webhook just for broker and trigger
+	// status with allow unknown fields set.
 
-	// ProjectID is the resolved project ID in use by the Broker.
+	// ProjectID is the resolved project ID in use by the Broker's pubsub resources.
 	// +optional
 	ProjectID string `json:"projectId,omitempty"`
 

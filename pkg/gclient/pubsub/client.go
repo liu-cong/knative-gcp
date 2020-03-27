@@ -75,6 +75,11 @@ func (c *pubsubClient) CreateSubscription(ctx context.Context, id string, cfg Su
 	return &pubsubSubscription{sub: sub}, nil
 }
 
+// Topic implements pubsub.Client.Topic
+func (c *pubsubClient) Topic(id string) Topic {
+	return &pubsubTopic{topic: c.client.Topic(id)}
+}
+
 // CreateTopic implements pubsub.Client.CreateTopic
 func (c *pubsubClient) CreateTopic(ctx context.Context, id string) (Topic, error) {
 	topic, err := c.client.CreateTopic(ctx, id)
@@ -84,7 +89,18 @@ func (c *pubsubClient) CreateTopic(ctx context.Context, id string) (Topic, error
 	return &pubsubTopic{topic: topic}, nil
 }
 
-// Topic implements pubsub.Client.Topic
-func (c *pubsubClient) Topic(id string) Topic {
-	return &pubsubTopic{topic: c.client.Topic(id)}
+// CreateTopicWithConfig implements pubsub.Client.CreateTopicWithConfig
+func (c *pubsubClient) CreateTopicWithConfig(ctx context.Context, id string, cfg *TopicConfig) (Topic, error) {
+	tcfg := &pubsub.TopicConfig{
+		MessageStoragePolicy: pubsub.MessageStoragePolicy{
+			AllowedPersistenceRegions: cfg.MessageStoragePolicy.AllowedPersistenceRegions,
+		},
+		Labels:     cfg.Labels,
+		KMSKeyName: cfg.KMSKeyName,
+	}
+	topic, err := c.client.CreateTopicWithConfig(ctx, id, tcfg)
+	if err != nil {
+		return nil, err
+	}
+	return &pubsubTopic{topic: topic}, nil
 }

@@ -35,6 +35,8 @@ type Client interface {
 	CreateSubscription(ctx context.Context, id string, cfg SubscriptionConfig) (Subscription, error)
 	// CreateTopic see https://godoc.org/cloud.google.com/go/pubsub#Client.CreateTopic
 	CreateTopic(ctx context.Context, id string) (Topic, error)
+	// CreateTopicWithConfig see https://godoc.org/cloud.google.com/go/pubsub#Client.CreateTopicWithConfig
+	CreateTopicWithConfig(ctx context.Context, id string, cfg *TopicConfig) (Topic, error)
 }
 
 // Client matches the interface exposed by pubsub.Subscription

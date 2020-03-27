@@ -70,7 +70,23 @@ var (
 // TriggerStatus represents the current state of a Trigger.
 type TriggerStatus struct {
 	eventingv1beta1.TriggerStatus `json:",inline"`
-	//TODO topic and subscription id
+
+	//TODO these fields don't work yet.
+	//TODO this requires updating the eventing webhook to allow unknown fields. Since the only unknown
+	// fields required are in status, maybe we can use a separate webhook just for broker and trigger
+	// status with allow unknown fields set.
+
+	// ProjectID is the resolved project ID in use by the Trigger's PubSub resources.
+	// +optional
+	ProjectID string `json:"projectId,omitempty"`
+
+	// TopicID is the created topic ID used by the Broker.
+	// +optional
+	TopicID string `json:"topicId,omitempty"`
+
+	// SubscriptionID is the created subscription ID used by the Broker.
+	// +optional
+	SubscriptionID string `json:"subscriptionId,omitempty"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object

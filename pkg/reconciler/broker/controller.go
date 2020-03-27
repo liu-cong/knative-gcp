@@ -19,6 +19,7 @@ package broker
 import (
 	"context"
 
+	brokerv1beta1 "github.com/google/knative-gcp/pkg/apis/broker/v1beta1"
 	brokerinformer "github.com/google/knative-gcp/pkg/client/injection/informers/broker/v1beta1/broker"
 	triggerinformer "github.com/google/knative-gcp/pkg/client/injection/informers/broker/v1beta1/trigger"
 	brokerreconciler "github.com/google/knative-gcp/pkg/client/injection/reconciler/broker/v1beta1/broker"
@@ -44,7 +45,6 @@ const (
 	// controllerAgentName is the string used by this controller to identify
 	// itself when creating events.
 	controllerAgentName = "gcp-broker-controller"
-	brokerClassValue    = "gcp"
 )
 
 func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl {
@@ -59,7 +59,7 @@ func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl 
 		triggerLister:   triggerInformer.Lister(),
 		endpointsLister: endpointsInformer.Lister(),
 		CreateClientFn:  gpubsub.NewClient,
-		brokerClass:     brokerClassValue,
+		brokerClass:     brokerv1beta1.BrokerClass,
 	}
 	impl := brokerreconciler.NewImpl(ctx, r)
 
@@ -72,7 +72,7 @@ func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl 
 	r.uriResolver = resolver.NewURIResolver(ctx, impl.EnqueueKey)
 
 	brokerInformer.Informer().AddEventHandler(cache.FilteringResourceEventHandler{
-		FilterFunc: pkgreconciler.AnnotationFilterFunc(v1beta1.BrokerClassAnnotationKey, brokerClassValue, false /*allowUnset*/),
+		FilterFunc: pkgreconciler.AnnotationFilterFunc(v1beta1.BrokerClassAnnotationKey, brokerv1beta1.BrokerClass, false /*allowUnset*/),
 		Handler:    controller.HandleAll(impl.Enqueue),
 	})
 
