@@ -20,9 +20,11 @@ import (
 	"context"
 
 	brokerv1beta1 "github.com/google/knative-gcp/pkg/apis/broker/v1beta1"
+	injectionclient "github.com/google/knative-gcp/pkg/client/injection/client"
 	brokerinformer "github.com/google/knative-gcp/pkg/client/injection/informers/broker/v1beta1/broker"
 	triggerinformer "github.com/google/knative-gcp/pkg/client/injection/informers/broker/v1beta1/trigger"
 	brokerreconciler "github.com/google/knative-gcp/pkg/client/injection/reconciler/broker/v1beta1/broker"
+	triggerreconciler "github.com/google/knative-gcp/pkg/client/injection/reconciler/broker/v1beta1/trigger"
 	gpubsub "github.com/google/knative-gcp/pkg/gclient/pubsub"
 	"github.com/google/knative-gcp/pkg/reconciler"
 	"k8s.io/apimachinery/pkg/types"
@@ -56,20 +58,35 @@ func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl 
 
 	r := &Reconciler{
 		Base:            reconciler.NewBase(ctx, controllerAgentName, cmw),
-		brokerLister:    brokerInformer.Lister(),
 		triggerLister:   triggerInformer.Lister(),
-		configMapLister: configmapInformer.Lister(),
+		configMapLister: configMapInformer.Lister(),
 		endpointsLister: endpointsInformer.Lister(),
 		CreateClientFn:  gpubsub.NewClient,
 		brokerClass:     brokerv1beta1.BrokerClass,
 	}
 	impl := brokerreconciler.NewImpl(ctx, r)
 
+	tr := &TriggerReconciler{
+		Base:           reconciler.NewBase(ctx, controllerAgentName, cmw),
+		CreateClientFn: gpubsub.NewClient,
+	}
+
+	triggerReconciler := triggerreconciler.NewReconciler(
+		ctx,
+		r.Logger,
+		injectionclient.Get(ctx),
+		triggerInformer.Lister(),
+		r.Recorder,
+		tr,
+	)
+
+	r.triggerReconciler = triggerReconciler
+
 	r.Logger.Info("Setting up event handlers")
 
-	r.kresourceTracker = duck.NewListableTracker(ctx, conditions.Get, impl.EnqueueKey, controller.GetTrackerLease(ctx))
-	r.addressableTracker = duck.NewListableTracker(ctx, addressable.Get, impl.EnqueueKey, controller.GetTrackerLease(ctx))
-	r.uriResolver = resolver.NewURIResolver(ctx, impl.EnqueueKey)
+	tr.kresourceTracker = duck.NewListableTracker(ctx, conditions.Get, impl.EnqueueKey, controller.GetTrackerLease(ctx))
+	tr.addressableTracker = duck.NewListableTracker(ctx, addressable.Get, impl.EnqueueKey, controller.GetTrackerLease(ctx))
+	tr.uriResolver = resolver.NewURIResolver(ctx, impl.EnqueueKey)
 
 	brokerInformer.Informer().AddEventHandler(cache.FilteringResourceEventHandler{
 		FilterFunc: pkgreconciler.AnnotationFilterFunc(eventingv1beta1.BrokerClassAnnotationKey, brokerv1beta1.BrokerClass, false /*allowUnset*/),

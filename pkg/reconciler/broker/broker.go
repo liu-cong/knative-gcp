@@ -32,10 +32,10 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	corev1listers "k8s.io/client-go/listers/core/v1"
-	"knative.dev/eventing/pkg/duck"
+	"k8s.io/client-go/tools/cache"
+	"knative.dev/pkg/controller"
 	"knative.dev/pkg/logging"
 	pkgreconciler "knative.dev/pkg/reconciler"
-	"knative.dev/pkg/resolver"
 )
 
 const (
@@ -60,28 +60,23 @@ type Reconciler struct {
 	*reconciler.Base
 
 	// listers index properties about resources
-	brokerLister    brokerlisters.BrokerLister
 	triggerLister   brokerlisters.TriggerLister
 	configMapLister corev1listers.ConfigMapLister
 	endpointsLister corev1listers.EndpointsLister
 
-	// Dynamic tracker to track KResources. It tracks the dependency between Triggers and Sources.
-	kresourceTracker duck.ListableTracker
-
-	// Dynamic tracker to track AddressableTypes. It tracks Trigger subscribers.
-	addressableTracker duck.ListableTracker
-	uriResolver        *resolver.URIResolver
-
 	// CreateClientFn is the function used to create the Pub/Sub client that interacts with Pub/Sub.
 	// This is needed so that we can inject a mock client for UTs purposes.
 	CreateClientFn gpubsub.CreateFn
+
+	// Reconciles a broker's triggers
+	triggerReconciler controller.Reconciler
 
 	// If specified, only reconcile brokers with these labels
 	//TODO(grantr): seems to be unused?
 	brokerClass string
 }
 
-// Check that our Reconciler implements Interface
+// Check that Reconciler implements Interface
 var _ brokerreconciler.Interface = (*Reconciler)(nil)
 var _ brokerreconciler.Finalizer = (*Reconciler)(nil)
 
@@ -97,95 +92,41 @@ func newReconciledNormal(namespace, name string) pkgreconciler.Event {
 }
 
 func (r *Reconciler) ReconcileKind(ctx context.Context, b *brokerv1beta1.Broker) pkgreconciler.Event {
-	err := r.reconcileBroker(ctx, b)
-	if err != nil {
+	if err := r.reconcileBroker(ctx, b); err != nil {
 		logging.FromContext(ctx).Error("Problem reconciling broker", zap.Error(err))
+		return fmt.Errorf("failed to reconcile broker: %v", err)
 	}
 
 	//TODO instead of returning on error, update the data plane configmap with
 	// whatever info is available. This should all be in the same configmap
 	// so it's transactional.
 
-	if true { //TODO b.Status.IsReady() {
-		// So, at this point the Broker is ready and everything should be solid
-		// for the triggers to act upon, so reconcile them.
-		te := r.reconcileTriggers(ctx, b)
-		if te != nil {
-			logging.FromContext(ctx).Error("Problem reconciling triggers", zap.Error(te))
-			return fmt.Errorf("failed to reconcile triggers: %v", te)
-		}
-	} else {
-		// Broker is not ready, but propagate its status to triggers.
-		if te := r.propagateBrokerStatusToTriggers(ctx, b.Namespace, b.Name, &b.Status); te != nil {
-			return fmt.Errorf("Trigger reconcile failed: %v", te)
-		}
+	if err := r.reconcileTriggers(ctx, b); err != nil {
+		logging.FromContext(ctx).Error("Problem reconciling triggers", zap.Error(err))
+		return fmt.Errorf("failed to reconcile triggers: %v", err)
 	}
-	return err
+
+	return newReconciledNormal(b.Namespace, b.Name)
 }
 
 func (r *Reconciler) FinalizeKind(ctx context.Context, b *brokerv1beta1.Broker) pkgreconciler.Event {
 	logger := logging.FromContext(ctx).Desugar()
 	logger.Debug("Finalizing Broker")
-	// get ProjectID from config or metadata
-	//TODO(grantr) support configuring project in broker config
-	projectID, err := utils.ProjectID("")
-	if err != nil {
-		logger.Error("Failed to find project id", zap.Error(err))
-		return err
+
+	// Reconcile triggers so they update their status
+	if err := r.reconcileTriggers(ctx, b); err != nil {
+		logging.FromContext(ctx).Error("Problem reconciling triggers", zap.Error(err))
+		return fmt.Errorf("failed to reconcile triggers: %v", err)
 	}
 
-	client, err := r.CreateClientFn(ctx, projectID)
-	if err != nil {
-		logger.Error("Failed to create Pub/Sub client", zap.Error(err))
-		return err
-	}
-	defer client.Close()
-
-	// Delete topic if it exists. Pull subscriptions continue pulling from the
-	// topic until deleted themselves.
-	topicID := resources.GenerateDecouplingTopicName(b)
-	topic := client.Topic(topicID)
-	exists, err := topic.Exists(ctx)
-	if err != nil {
-		logger.Error("Failed to verify Pub/Sub topic exists", zap.Error(err))
-		return err
-	}
-	if exists {
-		if err := topic.Delete(ctx); err != nil {
-			logger.Error("Failed to delete Pub/Sub topic", zap.Error(err))
-			return err
-		}
-		logger.Info("Deleted PubSub topic", zap.String("name", topic.ID()))
-		r.Recorder.Eventf(b, corev1.EventTypeNormal, topicDeleted, "Deleted PubSub topic %q", topic.ID())
+	if err := r.deleteDecouplingTopicAndSubscription(ctx, b); err != nil {
+		return fmt.Errorf("Failed to delete Pub/Sub topic: %v", err)
 	}
 
-	// Delete pull subscription if it exists.
-	// TODO could alternately set expiration policy to make pubsub delete it after some idle time.
-	// https://cloud.google.com/pubsub/docs/admin#deleting_a_topic
-	subID := resources.GenerateDecouplingSubscriptionName(b)
-	sub := client.Subscription(subID)
-	exists, err = sub.Exists(ctx)
-	if err != nil {
-		logger.Error("Failed to verify Pub/Sub subscription exists", zap.Error(err))
-		return err
-	}
-	if exists {
-		if err := sub.Delete(ctx); err != nil {
-			logger.Error("Failed to delete Pub/Sub subscription", zap.Error(err))
-			return err
-		}
-		logger.Info("Deleted PubSub subscription", zap.String("name", sub.ID()))
-		r.Recorder.Eventf(b, corev1.EventTypeNormal, subDeleted, "Deleted PubSub subscription %q", sub.ID())
-	}
-
-	// Update triggers to have a missing broker (and become unready).
-	if err := r.propagateBrokerStatusToTriggers(ctx, b.Namespace, b.Name, nil); err != nil {
-		return fmt.Errorf("Trigger reconcile failed: %v", err)
-	}
 	return newReconciledNormal(b.Namespace, b.Name)
 }
 
-func (r *Reconciler) reconcileBroker(ctx context.Context, b *brokerv1beta1.Broker) pkgreconciler.Event {
+func (r *Reconciler) reconcileBroker(ctx context.Context, b *brokerv1beta1.Broker) error {
 	logger := logging.FromContext(ctx).Desugar()
 	logger.Debug("Reconciling Broker", zap.Any("broker", b))
 	//TODO b.Status.InitializeConditions()
@@ -193,7 +134,7 @@ func (r *Reconciler) reconcileBroker(ctx context.Context, b *brokerv1beta1.Broke
 
 	// Create decoupling topic and pullsub for this broker. Ingress will push
 	// to this topic and fanout will pull from the pull sub.
-	if err := r.reconcileDecouplingTopicAndSub(ctx, b); err != nil {
+	if err := r.reconcileDecouplingTopicAndSubscription(ctx, b); err != nil {
 		return fmt.Errorf("Decoupling topic reconcile failed: %w", err)
 	}
 	//TODO pubsub conditions
@@ -201,7 +142,7 @@ func (r *Reconciler) reconcileBroker(ctx context.Context, b *brokerv1beta1.Broke
 	return nil
 }
 
-func (r *Reconciler) reconcileDecouplingTopicAndSub(ctx context.Context, b *brokerv1beta1.Broker) pkgreconciler.Event {
+func (r *Reconciler) reconcileDecouplingTopicAndSubscription(ctx context.Context, b *brokerv1beta1.Broker) error {
 	logger := logging.FromContext(ctx).Desugar()
 	logger.Debug("Reconciling decoupling topic")
 	// get ProjectID from config or metadata
@@ -304,6 +245,65 @@ func (r *Reconciler) reconcileDecouplingTopicAndSub(ctx context.Context, b *brok
 	return nil
 }
 
+func (r *Reconciler) deleteDecouplingTopicAndSubscription(ctx context.Context, b *brokerv1beta1.Broker) error {
+	logger := logging.FromContext(ctx).Desugar()
+	logger.Debug("Deleting decoupling topic")
+
+	// get ProjectID from config or metadata
+	//TODO(grantr) support configuring project in broker config
+	projectID, err := utils.ProjectID("")
+	if err != nil {
+		logger.Error("Failed to find project id", zap.Error(err))
+		return err
+	}
+
+	client, err := r.CreateClientFn(ctx, projectID)
+	if err != nil {
+		logger.Error("Failed to create Pub/Sub client", zap.Error(err))
+		return err
+	}
+	defer client.Close()
+
+	// Delete topic if it exists. Pull subscriptions continue pulling from the
+	// topic until deleted themselves.
+	topicID := resources.GenerateDecouplingTopicName(b)
+	topic := client.Topic(topicID)
+	exists, err := topic.Exists(ctx)
+	if err != nil {
+		logger.Error("Failed to verify Pub/Sub topic exists", zap.Error(err))
+		return err
+	}
+	if exists {
+		if err := topic.Delete(ctx); err != nil {
+			logger.Error("Failed to delete Pub/Sub topic", zap.Error(err))
+			return err
+		}
+		logger.Info("Deleted PubSub topic", zap.String("name", topic.ID()))
+		r.Recorder.Eventf(b, corev1.EventTypeNormal, topicDeleted, "Deleted PubSub topic %q", topic.ID())
+	}
+
+	// Delete pull subscription if it exists.
+	// TODO could alternately set expiration policy to make pubsub delete it after some idle time.
+	// https://cloud.google.com/pubsub/docs/admin#deleting_a_topic
+	subID := resources.GenerateDecouplingSubscriptionName(b)
+	sub := client.Subscription(subID)
+	exists, err = sub.Exists(ctx)
+	if err != nil {
+		logger.Error("Failed to verify Pub/Sub subscription exists", zap.Error(err))
+		return err
+	}
+	if exists {
+		if err := sub.Delete(ctx); err != nil {
+			logger.Error("Failed to delete Pub/Sub subscription", zap.Error(err))
+			return err
+		}
+		logger.Info("Deleted PubSub subscription", zap.String("name", sub.ID()))
+		r.Recorder.Eventf(b, corev1.EventTypeNormal, subDeleted, "Deleted PubSub subscription %q", sub.ID())
+	}
+
+	return nil
+}
+
 // reconcileTriggers reconciles the Triggers that are pointed to this broker
 func (r *Reconciler) reconcileTriggers(ctx context.Context, b *brokerv1beta1.Broker) error {
 
@@ -316,55 +316,45 @@ func (r *Reconciler) reconcileTriggers(ctx context.Context, b *brokerv1beta1.Bro
 	if err != nil {
 		return err
 	}
+	ctx = contextWithBroker(ctx, b)
 	for _, t := range triggers {
 		if t.Spec.Broker == b.Name {
-			trigger := t.DeepCopy()
 			logger := logging.FromContext(ctx).With(zap.String("trigger", t.Name), zap.String("broker", b.Name))
 			ctx = logging.WithLogger(ctx, logger)
 
-			//TODO add finalizer to trigger and skip
-
-			tErr := r.reconcileTrigger(ctx, b, trigger)
-
-			if tErr != nil {
-				logger.Error("Reconciling trigger failed:", zap.Error(err))
-				r.Recorder.Eventf(trigger, corev1.EventTypeWarning, triggerReconcileFailed, "Trigger reconcile failed: %v", tErr)
-			} else {
-				r.Recorder.Event(trigger, corev1.EventTypeNormal, triggerReconciled, "Trigger reconciled")
-			}
-			trigger.Status.ObservedGeneration = t.Generation
-			if _, updateStatusErr := r.updateTriggerStatus(ctx, trigger); updateStatusErr != nil {
-				logging.FromContext(ctx).Error("Failed to update Trigger status", zap.Error(updateStatusErr))
-				r.Recorder.Eventf(trigger, corev1.EventTypeWarning, triggerUpdateStatusFailed, "Failed to update Trigger's status: %v", updateStatusErr)
+			if tKey, err := cache.MetaNamespaceKeyFunc(t); err == nil {
+				err = r.triggerReconciler.Reconcile(ctx, tKey)
 			}
 		}
 	}
 
-	return nil
+	//TODO aggregate errors?
+	return err
 }
 
+// TODO replace this with reconcileTriggers
 func (r *Reconciler) propagateBrokerStatusToTriggers(ctx context.Context, namespace, name string, bs *brokerv1beta1.BrokerStatus) error {
-	triggers, err := r.triggerLister.Triggers(namespace).List(labels.Everything())
-	if err != nil {
-		return err
-	}
-	for _, t := range triggers {
-		if t.Spec.Broker == name {
-			// Don't modify informers copy
-			trigger := t.DeepCopy()
-			trigger.Status.InitializeConditions()
-			if bs == nil {
-				trigger.Status.MarkBrokerFailed("BrokerDoesNotExist", "Broker %q does not exist", name)
-			} else {
-				//TODO types
-				//trigger.Status.PropagateBrokerStatus(bs.BrokerStatus)
-			}
-			if _, updateStatusErr := r.updateTriggerStatus(ctx, trigger); updateStatusErr != nil {
-				logging.FromContext(ctx).Error("Failed to update Trigger status", zap.Error(updateStatusErr))
-				r.Recorder.Eventf(trigger, corev1.EventTypeWarning, triggerUpdateStatusFailed, "Failed to update Trigger's status: %v", updateStatusErr)
-				return updateStatusErr
-			}
-		}
-	}
+	// triggers, err := r.triggerLister.Triggers(namespace).List(labels.Everything())
+	// if err != nil {
+	// 	return err
+	// }
+	// for _, t := range triggers {
+	// 	if t.Spec.Broker == name {
+	// 		// Don't modify informers copy
+	// 		trigger := t.DeepCopy()
+	// 		trigger.Status.InitializeConditions()
+	// 		if bs == nil {
+	// 			trigger.Status.MarkBrokerFailed("BrokerDoesNotExist", "Broker %q does not exist", name)
+	// 		} else {
+	// 			//TODO types
+	// 			//trigger.Status.PropagateBrokerStatus(bs.BrokerStatus)
+	// 		}
+	// 		if _, updateStatusErr := r.updateTriggerStatus(ctx, trigger); updateStatusErr != nil {
+	// 			logging.FromContext(ctx).Error("Failed to update Trigger status", zap.Error(updateStatusErr))
+	// 			r.Recorder.Eventf(trigger, corev1.EventTypeWarning, triggerUpdateStatusFailed, "Failed to update Trigger's status: %v", updateStatusErr)
+	// 			return updateStatusErr
+	// 		}
+	// 	}
+	// }
 	return nil
 }
