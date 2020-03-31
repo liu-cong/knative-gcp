@@ -48,13 +48,11 @@ var _ channel.Interface = (*Reconciler)(nil)
 
 // ReconcileKind implements Interface.ReconcileKind.
 func (r *Reconciler) ReconcileKind(ctx context.Context, o *v1alpha1.Channel) reconciler.Event {
-	// TODO: use this if the resource implements InitializeConditions.
-	// o.Status.InitializeConditions()
+	o.Status.InitializeConditions()
 
 	// TODO: add custom reconciliation logic here.
 
-	// TODO: use this if the object has .status.ObservedGeneration.
-	// o.Status.ObservedGeneration = o.Generation
+	o.Status.ObservedGeneration = o.Generation
 	return newReconciledNormal(o.Namespace, o.Name)
 }
 
