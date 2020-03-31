@@ -24,8 +24,8 @@ import (
 	eventingv1beta1 "github.com/google/knative-gcp/pkg/client/clientset/versioned/typed/broker/v1beta1"
 	eventsv1alpha1 "github.com/google/knative-gcp/pkg/client/clientset/versioned/typed/events/v1alpha1"
 	messagingv1alpha1 "github.com/google/knative-gcp/pkg/client/clientset/versioned/typed/messaging/v1alpha1"
+	policyv1alpha1 "github.com/google/knative-gcp/pkg/client/clientset/versioned/typed/policy/v1alpha1"
 	pubsubv1alpha1 "github.com/google/knative-gcp/pkg/client/clientset/versioned/typed/pubsub/v1alpha1"
-	securityv1alpha1 "github.com/google/knative-gcp/pkg/client/clientset/versioned/typed/security/v1alpha1"
 	discovery "k8s.io/client-go/discovery"
 	rest "k8s.io/client-go/rest"
 	flowcontrol "k8s.io/client-go/util/flowcontrol"
@@ -36,8 +36,8 @@ type Interface interface {
 	EventingV1beta1() eventingv1beta1.EventingV1beta1Interface
 	EventsV1alpha1() eventsv1alpha1.EventsV1alpha1Interface
 	MessagingV1alpha1() messagingv1alpha1.MessagingV1alpha1Interface
+	PolicyV1alpha1() policyv1alpha1.PolicyV1alpha1Interface
 	PubsubV1alpha1() pubsubv1alpha1.PubsubV1alpha1Interface
-	SecurityV1alpha1() securityv1alpha1.SecurityV1alpha1Interface
 }
 
 // Clientset contains the clients for groups. Each group has exactly one
@@ -47,8 +47,8 @@ type Clientset struct {
 	eventingV1beta1   *eventingv1beta1.EventingV1beta1Client
 	eventsV1alpha1    *eventsv1alpha1.EventsV1alpha1Client
 	messagingV1alpha1 *messagingv1alpha1.MessagingV1alpha1Client
+	policyV1alpha1    *policyv1alpha1.PolicyV1alpha1Client
 	pubsubV1alpha1    *pubsubv1alpha1.PubsubV1alpha1Client
-	securityV1alpha1  *securityv1alpha1.SecurityV1alpha1Client
 }
 
 // EventingV1beta1 retrieves the EventingV1beta1Client
@@ -66,14 +66,14 @@ func (c *Clientset) MessagingV1alpha1() messagingv1alpha1.MessagingV1alpha1Inter
 	return c.messagingV1alpha1
 }
 
+// PolicyV1alpha1 retrieves the PolicyV1alpha1Client
+func (c *Clientset) PolicyV1alpha1() policyv1alpha1.PolicyV1alpha1Interface {
+	return c.policyV1alpha1
+}
+
 // PubsubV1alpha1 retrieves the PubsubV1alpha1Client
 func (c *Clientset) PubsubV1alpha1() pubsubv1alpha1.PubsubV1alpha1Interface {
 	return c.pubsubV1alpha1
-}
-
-// SecurityV1alpha1 retrieves the SecurityV1alpha1Client
-func (c *Clientset) SecurityV1alpha1() securityv1alpha1.SecurityV1alpha1Interface {
-	return c.securityV1alpha1
 }
 
 // Discovery retrieves the DiscoveryClient
@@ -109,11 +109,11 @@ func NewForConfig(c *rest.Config) (*Clientset, error) {
 	if err != nil {
 		return nil, err
 	}
-	cs.pubsubV1alpha1, err = pubsubv1alpha1.NewForConfig(&configShallowCopy)
+	cs.policyV1alpha1, err = policyv1alpha1.NewForConfig(&configShallowCopy)
 	if err != nil {
 		return nil, err
 	}
-	cs.securityV1alpha1, err = securityv1alpha1.NewForConfig(&configShallowCopy)
+	cs.pubsubV1alpha1, err = pubsubv1alpha1.NewForConfig(&configShallowCopy)
 	if err != nil {
 		return nil, err
 	}
@@ -132,8 +132,8 @@ func NewForConfigOrDie(c *rest.Config) *Clientset {
 	cs.eventingV1beta1 = eventingv1beta1.NewForConfigOrDie(c)
 	cs.eventsV1alpha1 = eventsv1alpha1.NewForConfigOrDie(c)
 	cs.messagingV1alpha1 = messagingv1alpha1.NewForConfigOrDie(c)
+	cs.policyV1alpha1 = policyv1alpha1.NewForConfigOrDie(c)
 	cs.pubsubV1alpha1 = pubsubv1alpha1.NewForConfigOrDie(c)
-	cs.securityV1alpha1 = securityv1alpha1.NewForConfigOrDie(c)
 
 	cs.DiscoveryClient = discovery.NewDiscoveryClientForConfigOrDie(c)
 	return &cs
@@ -145,8 +145,8 @@ func New(c rest.Interface) *Clientset {
 	cs.eventingV1beta1 = eventingv1beta1.New(c)
 	cs.eventsV1alpha1 = eventsv1alpha1.New(c)
 	cs.messagingV1alpha1 = messagingv1alpha1.New(c)
+	cs.policyV1alpha1 = policyv1alpha1.New(c)
 	cs.pubsubV1alpha1 = pubsubv1alpha1.New(c)
-	cs.securityV1alpha1 = securityv1alpha1.New(c)
 
 	cs.DiscoveryClient = discovery.NewDiscoveryClient(c)
 	return &cs

@@ -30,7 +30,7 @@ import (
 	"knative.dev/pkg/kmeta"
 	"knative.dev/pkg/logging"
 
-	"k8s.io/api/apps/v1"
+	v1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -150,8 +150,8 @@ func makeReceiveAdapterPodSpec(ctx context.Context, args *ReceiveAdapterArgs) *c
 	}
 
 	// If GCP service account is specified, use that service account as credential.
-	if args.Source.Spec.ServiceAccount != "" {
-		kServiceAccountName := resources.GenerateServiceAccountName(args.Source.Spec.ServiceAccount)
+	if args.Source.Spec.GoogleServiceAccount != "" {
+		kServiceAccountName := resources.GenerateServiceAccountName(args.Source.Spec.GoogleServiceAccount)
 		return &corev1.PodSpec{
 			ServiceAccountName: kServiceAccountName,
 			Containers: []corev1.Container{

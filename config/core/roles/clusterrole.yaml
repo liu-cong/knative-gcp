@@ -128,7 +128,6 @@ rules:
 - apiGroups:
     - eventing.knative.dev
   resources:
-    - eventtypes
     - brokers
     - brokers/status
     - triggers

@@ -35,6 +35,7 @@ import (
 	"knative.dev/pkg/controller"
 	logtesting "knative.dev/pkg/logging/testing"
 
+	duckv1alpha1 "github.com/google/knative-gcp/pkg/apis/duck/v1alpha1"
 	schedulerv1alpha1 "github.com/google/knative-gcp/pkg/apis/events/v1alpha1"
 	pubsubv1alpha1 "github.com/google/knative-gcp/pkg/apis/pubsub/v1alpha1"
 	"github.com/google/knative-gcp/pkg/client/injection/reconciler/events/v1alpha1/cloudschedulersource"
@@ -90,7 +91,7 @@ var (
 		Key: "key.json",
 	}
 
-	gServiceAccount = "test@test"
+	gServiceAccount = "test123@test123.iam.gserviceaccount.com"
 )
 
 func init() {
@@ -141,6 +142,7 @@ func newSink() *unstructured.Unstructured {
 	}
 }
 
+// TODO add a unit test for successfully creating a k8s service account, after issue https://github.com/google/knative-gcp/issues/657 gets solved.
 func TestAllCases(t *testing.T) {
 	schedulerSinkURL := sinkURI
 
@@ -152,52 +154,6 @@ func TestAllCases(t *testing.T) {
 		Name: "key not found",
 		// Make sure Reconcile handles good keys that don't exist.
 		Key: "foo/not-found",
-	}, {
-		Name: "k8s service account created",
-		Objects: []runtime.Object{
-			NewCloudSchedulerSource(schedulerName, testNS,
-				WithCloudSchedulerSourceSink(sinkGVK, sinkName),
-				WithCloudSchedulerSourceLocation(location),
-				WithCloudSchedulerSourceData(testData),
-				WithCloudSchedulerSourceSchedule(onceAMinuteSchedule),
-				WithCloudSchedulerSourceGCPServiceAccount(gServiceAccount),
-			),
-			newSink(),
-		},
-		Key: testNS + "/" + schedulerName,
-		WantStatusUpdates: []clientgotesting.UpdateActionImpl{{
-			Object: NewCloudSchedulerSource(schedulerName, testNS,
-				WithCloudSchedulerSourceSink(sinkGVK, sinkName),
-				WithCloudSchedulerSourceLocation(location),
-				WithCloudSchedulerSourceData(testData),
-				WithCloudSchedulerSourceSchedule(onceAMinuteSchedule),
-				WithInitCloudSchedulerSourceConditions,
-				WithCloudSchedulerSourceGCPServiceAccount(gServiceAccount),
-			),
-		}},
-		WantCreates: []runtime.Object{
-			NewServiceAccount("test", testNS, gServiceAccount),
-		},
-		WantUpdates: []clientgotesting.UpdateActionImpl{{
-			Object: NewServiceAccount("test", testNS, gServiceAccount,
-				WithServiceAccountOwnerReferences([]metav1.OwnerReference{{
-					APIVersion:         "events.cloud.google.com/v1alpha1",
-					Kind:               "CloudSchedulerSource",
-					Name:               "my-test-scheduler",
-					UID:                schedulerUID,
-					Controller:         &falseVal,
-					BlockOwnerDeletion: &trueVal,
-				}}),
-			),
-		}},
-		WantPatches: []clientgotesting.PatchActionImpl{
-			patchFinalizers(testNS, schedulerName, true),
-		},
-		WantEvents: []string{
-			Eventf(corev1.EventTypeNormal, "FinalizerUpdate", "Updated %q finalizers", schedulerName),
-			Eventf(corev1.EventTypeWarning, "UpdateFailed", `Failed to update status for "%s": invalid value: test@test, serviceAccount should have format: ^[a-z][a-z0-9-]{5,29}@[a-z][a-z0-9-]{5,29}.iam.gserviceaccount.com$: spec.serviceAccount`, schedulerName),
-		},
-		WantErr: true,
 	}, {
 		Name: "topic created, not ready",
 		Objects: []runtime.Object{
@@ -470,8 +426,10 @@ func TestAllCases(t *testing.T) {
 			WantCreates: []runtime.Object{
 				NewPullSubscriptionWithNoDefaults(schedulerName, testNS,
 					WithPullSubscriptionSpecWithNoDefaults(pubsubv1alpha1.PullSubscriptionSpec{
-						Topic:  testTopicID,
-						Secret: &secret,
+						Topic: testTopicID,
+						PubSubSpec: duckv1alpha1.PubSubSpec{
+							Secret: &secret,
+						},
 					}),
 					WithPullSubscriptionSink(sinkGVK, sinkName),
 					WithPullSubscriptionLabels(map[string]string{
@@ -1011,13 +969,28 @@ func TestAllCases(t *testing.T) {
 					WithCloudSchedulerSourceSinkURI(schedulerSinkURL),
 					WithCloudSchedulerSourceDeletionTimestamp,
 					WithCloudSchedulerSourceGCPServiceAccount(gServiceAccount),
+					WithCloudSchedulerSourceServiceAccountName("test123"),
 				),
 				newSink(),
 			},
-			Key:               testNS + "/" + schedulerName,
-			WantStatusUpdates: nil,
+			Key: testNS + "/" + schedulerName,
+			WantStatusUpdates: []clientgotesting.UpdateActionImpl{{
+				Object: NewCloudSchedulerSource(schedulerName, testNS,
+					WithCloudSchedulerSourceProject(testProject),
+					WithCloudSchedulerSourceSink(sinkGVK, sinkName),
+					WithCloudSchedulerSourceLocation(location),
+					WithCloudSchedulerSourceData(testData),
+					WithCloudSchedulerSourceSchedule(onceAMinuteSchedule),
+					WithInitCloudSchedulerSourceConditions,
+					WithCloudSchedulerSourceSinkURI(schedulerSinkURL),
+					WithCloudSchedulerSourceDeletionTimestamp,
+					WithCloudSchedulerSourceGCPServiceAccount(gServiceAccount),
+					WithCloudSchedulerSourceServiceAccountName("test123"),
+					WithCloudSchedulerSourceWorkloadIdentityFailed("WorkloadIdentityDeleteFailed", `serviceaccounts "test123" not found`),
+				),
+			}},
 			WantEvents: []string{
-				Eventf(corev1.EventTypeWarning, "WorkloadIdentityDeleteFailed", `Failed to delete CloudSchedulerSource workload identity: getting k8s service account failed with: serviceaccounts "test" not found`),
+				Eventf(corev1.EventTypeWarning, "WorkloadIdentityDeleteFailed", `Failed to delete CloudSchedulerSource workload identity: getting k8s service account failed with: serviceaccounts "test123" not found`),
 			},
 		}}
 
