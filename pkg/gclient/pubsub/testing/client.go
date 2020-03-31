@@ -70,20 +70,24 @@ func (c *testClient) Close() error {
 
 // Topic implements Client.Topic.
 func (c *testClient) Topic(id string) pubsub.Topic {
-	return &testTopic{data: c.data.TopicData, handleData: c.data.HandleData}
+	return &testTopic{data: c.data.TopicData, handleData: c.data.HandleData, id: id}
 }
 
 // Subscription implements Client.Subscription.
 func (c *testClient) Subscription(id string) pubsub.Subscription {
-	return &testSubscription{data: c.data.SubscriptionData}
+	return &testSubscription{data: c.data.SubscriptionData, id: id}
 }
 
 // CreateSubscription implements Client.CreateSubscription.
 func (c *testClient) CreateSubscription(ctx context.Context, id string, cfg pubsub.SubscriptionConfig) (pubsub.Subscription, error) {
-	return &testSubscription{data: c.data.SubscriptionData}, c.data.CreateSubscriptionErr
+	return &testSubscription{data: c.data.SubscriptionData, id: id}, c.data.CreateSubscriptionErr
 }
 
 // CreateTopic implements pubsub.Client.CreateTopic
 func (c *testClient) CreateTopic(ctx context.Context, id string) (pubsub.Topic, error) {
-	return &testTopic{data: c.data.TopicData, handleData: c.data.HandleData}, c.data.CreateTopicErr
+	return &testTopic{data: c.data.TopicData, handleData: c.data.HandleData, id: id}, c.data.CreateTopicErr
+}
+
+func (c *testClient) CreateTopicWithConfig(ctx context.Context, id string, _ *pubsub.TopicConfig) (pubsub.Topic, error) {
+	return &testTopic{data: c.data.TopicData, handleData: c.data.HandleData, id: id}, c.data.CreateTopicErr
 }

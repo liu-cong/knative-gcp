@@ -28,6 +28,7 @@ import (
 type testTopic struct {
 	data       TestTopicData
 	handleData testiam.TestHandleData
+	id         string
 }
 
 // TestTopicData is the data used to configure the test Topic.
@@ -51,4 +52,8 @@ func (t *testTopic) Delete(ctx context.Context) error {
 
 func (t *testTopic) IAM() iam.Handle {
 	return testiam.NewTestHandle(t.handleData)
+}
+
+func (t *testTopic) ID() string {
+	return t.id
 }
