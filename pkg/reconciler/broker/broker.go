@@ -82,11 +82,6 @@ var _ brokerreconciler.Finalizer = (*Reconciler)(nil)
 
 var brokerGVK = brokerv1beta1.SchemeGroupVersion.WithKind("Broker")
 
-// ReconcilerArgs are the arguments needed to create a broker.Reconciler.
-type ReconcilerArgs struct {
-	//TODO
-}
-
 func newReconciledNormal(namespace, name string) pkgreconciler.Event {
 	return pkgreconciler.NewEvent(corev1.EventTypeNormal, brokerReconciled, "Broker reconciled: \"%s/%s\"", namespace, name)
 }
@@ -129,7 +124,7 @@ func (r *Reconciler) FinalizeKind(ctx context.Context, b *brokerv1beta1.Broker) 
 func (r *Reconciler) reconcileBroker(ctx context.Context, b *brokerv1beta1.Broker) error {
 	logger := logging.FromContext(ctx).Desugar()
 	logger.Debug("Reconciling Broker", zap.Any("broker", b))
-	//TODO b.Status.InitializeConditions()
+	b.Status.InitializeConditions()
 	b.Status.ObservedGeneration = b.Generation
 
 	// Create decoupling topic and pullsub for this broker. Ingress will push
@@ -137,7 +132,6 @@ func (r *Reconciler) reconcileBroker(ctx context.Context, b *brokerv1beta1.Broke
 	if err := r.reconcileDecouplingTopicAndSubscription(ctx, b); err != nil {
 		return fmt.Errorf("Decoupling topic reconcile failed: %w", err)
 	}
-	//TODO pubsub conditions
 
 	return nil
 }
@@ -192,15 +186,18 @@ func (r *Reconciler) reconcileDecouplingTopicAndSubscription(ctx context.Context
 			// reason. We check for that error here. If it happens, then return nil.
 			if _, ok := gstatus.FromError(err); !ok {
 				logger.Error("Failed from Pub/Sub client while creating topic", zap.Error(err))
+				b.Status.MarkTopicFailed("CreationFailed", "Topic creation failed: %w", err)
 				return err
 			}
 			logger.Error("Failed to create Pub/Sub topic", zap.Error(err))
+			b.Status.MarkTopicFailed("CreationFailed", "Topic creation failed: %w", err)
 			return err
 		}
 		logger.Info("Created PubSub topic", zap.String("name", topic.ID()))
 		r.Recorder.Eventf(b, corev1.EventTypeNormal, topicCreated, "Created PubSub topic %q", topic.ID())
 	}
 
+	b.Status.MarkTopicReady()
 	// TODO(grantr): this isn't actually persisted due to webhook issues.
 	b.Status.TopicID = topic.ID()
 
@@ -232,6 +229,7 @@ func (r *Reconciler) reconcileDecouplingTopicAndSubscription(ctx context.Context
 		sub, err = client.CreateSubscription(ctx, subID, subConfig)
 		if err != nil {
 			logger.Error("Failed to create subscription", zap.Error(err))
+			b.Status.MarkSubscriptionFailed("CreationFailed", "Subscription creation failed: %w", err)
 			return err
 		}
 		logger.Info("Created PubSub subscription", zap.String("name", sub.ID()))
@@ -239,6 +237,7 @@ func (r *Reconciler) reconcileDecouplingTopicAndSubscription(ctx context.Context
 	}
 	//TODO update the subscription's config if needed.
 
+	b.Status.MarkSubscriptionReady()
 	// TODO(grantr): this isn't actually persisted due to webhook issues.
 	b.Status.SubscriptionID = sub.ID()
 

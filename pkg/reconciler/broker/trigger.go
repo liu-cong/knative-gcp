@@ -76,7 +76,7 @@ func (r *TriggerReconciler) ReconcileKind(ctx context.Context, t *brokerv1beta1.
 	}
 	t.Status.InitializeConditions()
 
-	//t.Status.PropagateBrokerStatus(b.Status)
+	t.Status.PropagateBrokerStatus(&b.Status)
 
 	if err := r.resolveSubscriber(ctx, t, b); err != nil {
 		return err
@@ -170,15 +170,18 @@ func (r *TriggerReconciler) reconcileRetryTopicAndSubscription(ctx context.Conte
 			// reason. We check for that error here. If it happens, then return nil.
 			if _, ok := gstatus.FromError(err); !ok {
 				logger.Error("Failed from Pub/Sub client while creating topic", zap.Error(err))
+				trig.Status.MarkTopicFailed("CreationFailed", "Topic creation failed: %w", err)
 				return err
 			}
 			logger.Error("Failed to create Pub/Sub topic", zap.Error(err))
+			trig.Status.MarkTopicFailed("CreationFailed", "Topic creation failed: %w", err)
 			return err
 		}
 		logger.Info("Created PubSub topic", zap.String("name", topic.ID()))
 		r.Recorder.Eventf(trig, corev1.EventTypeNormal, topicCreated, "Created PubSub topic %q", topic.ID())
 	}
 
+	trig.Status.MarkTopicReady()
 	// TODO(grantr): this isn't actually persisted due to webhook issues.
 	trig.Status.TopicID = topic.ID()
 
@@ -209,6 +212,7 @@ func (r *TriggerReconciler) reconcileRetryTopicAndSubscription(ctx context.Conte
 		sub, err = client.CreateSubscription(ctx, subID, subConfig)
 		if err != nil {
 			logger.Error("Failed to create subscription", zap.Error(err))
+			trig.Status.MarkSubscriptionFailed("CreationFailed", "Subscription creation failed: %w", err)
 			return err
 		}
 		logger.Info("Created PubSub subscription", zap.String("name", sub.ID()))
@@ -216,6 +220,7 @@ func (r *TriggerReconciler) reconcileRetryTopicAndSubscription(ctx context.Conte
 	}
 	//TODO update the subscription's config if needed.
 
+	trig.Status.MarkSubscriptionReady()
 	// TODO(grantr): this isn't actually persisted due to webhook issues.
 	trig.Status.SubscriptionID = sub.ID()
 
