@@ -20,6 +20,7 @@ import (
 	"context"
 
 	brokerv1beta1 "github.com/google/knative-gcp/pkg/apis/broker/v1beta1"
+	"github.com/google/knative-gcp/pkg/broker/config/memory"
 	injectionclient "github.com/google/knative-gcp/pkg/client/injection/client"
 	brokerinformer "github.com/google/knative-gcp/pkg/client/injection/informers/broker/v1beta1/broker"
 	triggerinformer "github.com/google/knative-gcp/pkg/client/injection/informers/broker/v1beta1/trigger"
@@ -56,6 +57,11 @@ func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl 
 	configMapInformer := configmapinformer.Get(ctx)
 	endpointsInformer := endpointsinformer.Get(ctx)
 
+	targetsConfig, err := memory.NewTargetsFromBytes([]byte{})
+	if err != nil {
+		panic(err)
+	}
+
 	r := &Reconciler{
 		Base:            reconciler.NewBase(ctx, controllerAgentName, cmw),
 		triggerLister:   triggerInformer.Lister(),
@@ -63,6 +69,8 @@ func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl 
 		endpointsLister: endpointsInformer.Lister(),
 		CreateClientFn:  gpubsub.NewClient,
 		brokerClass:     brokerv1beta1.BrokerClass,
+		//TODO use NewEmptyTargets()
+		targetsConfig: targetsConfig,
 	}
 	impl := brokerreconciler.NewImpl(ctx, r)
 

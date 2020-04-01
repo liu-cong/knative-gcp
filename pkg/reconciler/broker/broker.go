@@ -21,6 +21,7 @@ import (
 	"fmt"
 
 	brokerv1beta1 "github.com/google/knative-gcp/pkg/apis/broker/v1beta1"
+	"github.com/google/knative-gcp/pkg/broker/config"
 	brokerreconciler "github.com/google/knative-gcp/pkg/client/injection/reconciler/broker/v1beta1/broker"
 	brokerlisters "github.com/google/knative-gcp/pkg/client/listers/broker/v1beta1"
 	gpubsub "github.com/google/knative-gcp/pkg/gclient/pubsub"
@@ -46,15 +47,21 @@ const (
 	subCreated           = "SubscriptionCreated"
 	topicDeleted         = "TopicDeleted"
 	subDeleted           = "SubscriptionDeleted"
+
+	targetsCMNamespace = "cloud-run-events"
+	targetsCMName      = "broker-targets"
 )
 
-// TODO mostly deal with gcp resources here. defer other things like deployments while
-// data plane strategy is worked out.
-// can use PubSubBase to create Topic/PS for broker and Topic/PS for Trigger.
-// Each will get relevant conditions in their status.
-// This will create
-// PubSubSpec is slightly more complicated because of the config object indirection. Need to build the
-// PubSubSpec object on the fly from broker config.
+// TODO
+// idea: assign broker resources to cell (configmap) in webhook based on a
+// global configmap (in controller's namespace) of cell assignment rules, and
+// label the broker with the assignment. Controller uses these labels to
+// determine which configmap to create/update when a broker is reconciled, and
+// to determine which brokers to reconcile when a configmap is updated.
+// Initially, the assignment can be static.
+
+// TODO bug: if broker is deleted first, triggers can't be reconciled
+// TODO: verify that if topic is deleted from gcp it's recreated here
 
 type Reconciler struct {
 	*reconciler.Base
@@ -74,6 +81,13 @@ type Reconciler struct {
 	// If specified, only reconcile brokers with these labels
 	//TODO(grantr): seems to be unused?
 	brokerClass string
+
+	// TODO allow configuring multiples of these
+	// TODO load from existing config in a sync.Once? To avoid losing config
+	// as initial resync occurs. The update of the configmap should be done
+	// in a separate goroutine with a triggering channel to avoid contention
+	// between multiple controller workers
+	targetsConfig config.Targets
 }
 
 // Check that Reconciler implements Interface
@@ -88,18 +102,18 @@ func newReconciledNormal(namespace, name string) pkgreconciler.Event {
 
 func (r *Reconciler) ReconcileKind(ctx context.Context, b *brokerv1beta1.Broker) pkgreconciler.Event {
 	if err := r.reconcileBroker(ctx, b); err != nil {
-		logging.FromContext(ctx).Error("Problem reconciling broker", zap.Error(err))
+		logging.FromContext(ctx).Desugar().Error("Problem reconciling broker", zap.Error(err))
 		return fmt.Errorf("failed to reconcile broker: %v", err)
+		//TODO instead of returning on error, update the data plane configmap with
+		// whatever info is available. or put this in a defer?
 	}
-
-	//TODO instead of returning on error, update the data plane configmap with
-	// whatever info is available. This should all be in the same configmap
-	// so it's transactional.
 
 	if err := r.reconcileTriggers(ctx, b); err != nil {
-		logging.FromContext(ctx).Error("Problem reconciling triggers", zap.Error(err))
+		logging.FromContext(ctx).Desugar().Error("Problem reconciling triggers", zap.Error(err))
 		return fmt.Errorf("failed to reconcile triggers: %v", err)
 	}
+
+	logging.FromContext(ctx).Desugar().Info("targetsConfig", zap.Any("cfg", r.targetsConfig.String()))
 
 	return newReconciledNormal(b.Namespace, b.Name)
 }
@@ -110,7 +124,7 @@ func (r *Reconciler) FinalizeKind(ctx context.Context, b *brokerv1beta1.Broker) 
 
 	// Reconcile triggers so they update their status
 	if err := r.reconcileTriggers(ctx, b); err != nil {
-		logging.FromContext(ctx).Error("Problem reconciling triggers", zap.Error(err))
+		logging.FromContext(ctx).Desugar().Error("Problem reconciling triggers", zap.Error(err))
 		return fmt.Errorf("failed to reconcile triggers: %v", err)
 	}
 
@@ -132,6 +146,21 @@ func (r *Reconciler) reconcileBroker(ctx context.Context, b *brokerv1beta1.Broke
 	if err := r.reconcileDecouplingTopicAndSubscription(ctx, b); err != nil {
 		return fmt.Errorf("Decoupling topic reconcile failed: %w", err)
 	}
+
+	r.targetsConfig.MutateBroker(b.Namespace, b.Name, func(m config.BrokerMutation) {
+		m.SetID(string(b.UID))
+		m.SetAddress("") //TODO
+		m.SetDecoupleQueue(&config.Queue{
+			//TODO should this use the status fields or the name generator funcs?
+			Topic:        b.Status.TopicID,
+			Subscription: b.Status.SubscriptionID,
+		})
+		if b.Status.IsReady() {
+			m.SetState(config.State_READY)
+		} else {
+			m.SetState(config.State_UNKNOWN)
+		}
+	})
 
 	return nil
 }
@@ -323,6 +352,29 @@ func (r *Reconciler) reconcileTriggers(ctx context.Context, b *brokerv1beta1.Bro
 
 			if tKey, err := cache.MetaNamespaceKeyFunc(t); err == nil {
 				err = r.triggerReconciler.Reconcile(ctx, tKey)
+				r.targetsConfig.MutateBroker(b.Namespace, b.Name, func(m config.BrokerMutation) {
+					target := &config.Target{
+						Id:               string(t.UID),
+						Name:             t.Name,
+						Namespace:        t.Namespace,
+						Broker:           b.Name,
+						Address:          t.Status.SubscriberURI.String(),
+						FilterAttributes: t.Spec.Filter.Attributes,
+						RetryQueue: &config.Queue{
+							//TODO these don't work yet because the fields are cleared on update
+							//Topic:        t.Status.TopicID,
+							//Subscription: t.Status.SubscriptionID,
+							Topic:        resources.GenerateRetryTopicName(t),
+							Subscription: resources.GenerateRetrySubscriptionName(t),
+						},
+					}
+					if t.Status.IsReady() {
+						target.State = config.State_READY
+					} else {
+						target.State = config.State_UNKNOWN
+					}
+					m.InsertTargets(target)
+				})
 			}
 		}
 	}
