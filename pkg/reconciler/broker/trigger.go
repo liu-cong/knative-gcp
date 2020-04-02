@@ -21,6 +21,7 @@ import (
 	"fmt"
 
 	brokerv1beta1 "github.com/google/knative-gcp/pkg/apis/broker/v1beta1"
+	"github.com/google/knative-gcp/pkg/broker/config"
 	triggerreconciler "github.com/google/knative-gcp/pkg/client/injection/reconciler/broker/v1beta1/trigger"
 	gpubsub "github.com/google/knative-gcp/pkg/gclient/pubsub"
 	"github.com/google/knative-gcp/pkg/reconciler"
@@ -30,6 +31,7 @@ import (
 	gstatus "google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"knative.dev/eventing/pkg/apis/eventing/v1alpha1"
 	"knative.dev/eventing/pkg/duck"
 	duckv1 "knative.dev/pkg/apis/duck/v1"
@@ -72,7 +74,20 @@ func triggerNewReconciledNormal(namespace, name string) pkgreconciler.Event {
 func (r *TriggerReconciler) ReconcileKind(ctx context.Context, t *brokerv1beta1.Trigger) pkgreconciler.Event {
 	b := brokerFromContext(ctx)
 	if b == nil {
-		return fmt.Errorf("Couldn't fetch Broker from context")
+		// Assume the Broker has been deleted or doesn't exist yet. Create a
+		// Broker object with the expected name and namespace to
+		// reconcile with.
+		// TODO move this to resources package?
+		b = &brokerv1beta1.Broker{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      t.Spec.Broker,
+				Namespace: t.Namespace,
+			},
+			//TODO is this needed?
+			Status: brokerv1beta1.BrokerStatus{},
+		}
+		b.Status.InitializeConditions()
+		//return fmt.Errorf("Couldn't fetch Broker from context")
 	}
 	t.Status.InitializeConditions()
 
@@ -90,6 +105,33 @@ func (r *TriggerReconciler) ReconcileKind(ctx context.Context, t *brokerv1beta1.
 		return err
 	}
 
+	targetsConfig := targetsFromContext(ctx)
+	if targetsConfig == nil {
+		return fmt.Errorf("Couldn't fetch Targets from context")
+	}
+
+	targetsConfig.MutateBroker(b.Namespace, b.Name, func(m config.BrokerMutation) {
+		target := &config.Target{
+			Id:               string(t.UID),
+			Name:             t.Name,
+			Namespace:        t.Namespace,
+			Broker:           b.Name,
+			Address:          t.Status.SubscriberURI.String(),
+			FilterAttributes: t.Spec.Filter.Attributes,
+			RetryQueue: &config.Queue{
+				//TODO should this use the status fields or the name generator funcs?
+				Topic:        t.Status.TopicID,
+				Subscription: t.Status.SubscriptionID,
+			},
+		}
+		if t.Status.IsReady() {
+			target.State = config.State_READY
+		} else {
+			target.State = config.State_UNKNOWN
+		}
+		m.InsertTargets(target)
+	})
+
 	return triggerNewReconciledNormal(t.Namespace, t.Name)
 }
 
@@ -97,6 +139,19 @@ func (r *TriggerReconciler) FinalizeKind(ctx context.Context, t *brokerv1beta1.T
 	if err := r.deleteRetryTopicAndSubscription(ctx, t); err != nil {
 		return err
 	}
+
+	targetsConfig := targetsFromContext(ctx)
+	if targetsConfig == nil {
+		return fmt.Errorf("Couldn't fetch Targets from context")
+	}
+
+	// Use the trigger's namespace and broker name here so the broker isn't needed
+	// from context
+	targetsConfig.MutateBroker(t.Namespace, t.Spec.Broker, func(m config.BrokerMutation) {
+		m.DeleteTargets(&config.Target{
+			Name: t.Name,
+		})
+	})
 
 	return triggerNewReconciledNormal(t.Namespace, t.Name)
 }
@@ -108,6 +163,7 @@ func (r *TriggerReconciler) resolveSubscriber(ctx context.Context, t *brokerv1be
 		t.Spec.Subscriber.Ref.Namespace = t.GetNamespace()
 	}
 
+	//TODO only do this when the broker exists? It works without a UID
 	subscriberURI, err := r.uriResolver.URIFromDestinationV1(t.Spec.Subscriber, b)
 	if err != nil {
 		logging.FromContext(ctx).Desugar().Error("Unable to get the Subscriber's URI", zap.Error(err))
@@ -293,6 +349,7 @@ func (r *TriggerReconciler) checkDependencyAnnotation(ctx context.Context, t *br
 			t.Status.MarkDependencyFailed("ReferenceError", "Unable to unmarshal objectReference from dependency annotation of trigger: %v", err)
 			return fmt.Errorf("getting object ref from dependency annotation %q: %v", dependencyAnnotation, err)
 		}
+		//TODO only do this when the broker exists? It works without a UID
 		trackKResource := r.kresourceTracker.TrackInNamespace(b)
 		// Trigger and its dependent source are in the same namespace, we already did the validation in the webhook.
 		if err := trackKResource(dependencyObjRef); err != nil {
@@ -349,4 +406,18 @@ func brokerFromContext(ctx context.Context) *brokerv1beta1.Broker {
 
 func contextWithBroker(ctx context.Context, b *brokerv1beta1.Broker) context.Context {
 	return context.WithValue(ctx, brokerKey{}, b)
+}
+
+type targetsKey struct{}
+
+func targetsFromContext(ctx context.Context) config.Targets {
+	untyped := ctx.Value(targetsKey{})
+	if untyped == nil {
+		return nil
+	}
+	return untyped.(config.Targets)
+}
+
+func contextWithTargets(ctx context.Context, t config.Targets) context.Context {
+	return context.WithValue(ctx, targetsKey{}, t)
 }

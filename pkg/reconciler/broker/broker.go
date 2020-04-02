@@ -18,7 +18,9 @@ package broker
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
+	"time"
 
 	brokerv1beta1 "github.com/google/knative-gcp/pkg/apis/broker/v1beta1"
 	"github.com/google/knative-gcp/pkg/broker/config"
@@ -31,6 +33,9 @@ import (
 	"go.uber.org/zap"
 	gstatus "google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
@@ -48,8 +53,10 @@ const (
 	topicDeleted         = "TopicDeleted"
 	subDeleted           = "SubscriptionDeleted"
 
-	targetsCMNamespace = "cloud-run-events"
-	targetsCMName      = "broker-targets"
+	targetsCMNamespace    = "cloud-run-events"
+	targetsCMName         = "broker-targets"
+	targetsCMKey          = "targets.pb"
+	targetsCMResyncPeriod = 10 * time.Second
 )
 
 // TODO
@@ -84,10 +91,13 @@ type Reconciler struct {
 
 	// TODO allow configuring multiples of these
 	// TODO load from existing config in a sync.Once? To avoid losing config
-	// as initial resync occurs. The update of the configmap should be done
-	// in a separate goroutine with a triggering channel to avoid contention
-	// between multiple controller workers
+	// as initial resync occurs.
 	targetsConfig config.Targets
+
+	// targetsNeedsUpdate is a channel that flags the targets ConfigMap as
+	// needing update. This is done in a separate goroutine to avoid contention
+	// between multiple controller workers.
+	targetsNeedsUpdate chan struct{}
 }
 
 // Check that Reconciler implements Interface
@@ -132,6 +142,11 @@ func (r *Reconciler) FinalizeKind(ctx context.Context, b *brokerv1beta1.Broker) 
 		return fmt.Errorf("Failed to delete Pub/Sub topic: %v", err)
 	}
 
+	// TODO should we also delete the broker from the config? Maybe better
+	// to keep the targets in place if there are still triggers. But we can
+	// update the status to UNKNOWN and remove address etc. Maybe need a new
+	// status DELETED or a deleted timestamp that can be used to clean up later.
+
 	return newReconciledNormal(b.Namespace, b.Name)
 }
 
@@ -162,6 +177,11 @@ func (r *Reconciler) reconcileBroker(ctx context.Context, b *brokerv1beta1.Broke
 		}
 	})
 
+	// Update config map
+	r.flagTargetsForUpdate()
+
+	//TODO configmap cleanup: if any brokers are in deleted state with no triggers
+	// (or all triggers are in deleted state), remove that entry
 	return nil
 }
 
@@ -344,7 +364,9 @@ func (r *Reconciler) reconcileTriggers(ctx context.Context, b *brokerv1beta1.Bro
 	if err != nil {
 		return err
 	}
+
 	ctx = contextWithBroker(ctx, b)
+	ctx = contextWithTargets(ctx, r.targetsConfig)
 	for _, t := range triggers {
 		if t.Spec.Broker == b.Name {
 			logger := logging.FromContext(ctx).With(zap.String("trigger", t.Name), zap.String("broker", b.Name))
@@ -352,29 +374,6 @@ func (r *Reconciler) reconcileTriggers(ctx context.Context, b *brokerv1beta1.Bro
 
 			if tKey, err := cache.MetaNamespaceKeyFunc(t); err == nil {
 				err = r.triggerReconciler.Reconcile(ctx, tKey)
-				r.targetsConfig.MutateBroker(b.Namespace, b.Name, func(m config.BrokerMutation) {
-					target := &config.Target{
-						Id:               string(t.UID),
-						Name:             t.Name,
-						Namespace:        t.Namespace,
-						Broker:           b.Name,
-						Address:          t.Status.SubscriberURI.String(),
-						FilterAttributes: t.Spec.Filter.Attributes,
-						RetryQueue: &config.Queue{
-							//TODO these don't work yet because the fields are cleared on update
-							//Topic:        t.Status.TopicID,
-							//Subscription: t.Status.SubscriptionID,
-							Topic:        resources.GenerateRetryTopicName(t),
-							Subscription: resources.GenerateRetrySubscriptionName(t),
-						},
-					}
-					if t.Status.IsReady() {
-						target.State = config.State_READY
-					} else {
-						target.State = config.State_UNKNOWN
-					}
-					m.InsertTargets(target)
-				})
 			}
 		}
 	}
@@ -383,29 +382,70 @@ func (r *Reconciler) reconcileTriggers(ctx context.Context, b *brokerv1beta1.Bro
 	return err
 }
 
-// TODO replace this with reconcileTriggers
-func (r *Reconciler) propagateBrokerStatusToTriggers(ctx context.Context, namespace, name string, bs *brokerv1beta1.BrokerStatus) error {
-	// triggers, err := r.triggerLister.Triggers(namespace).List(labels.Everything())
-	// if err != nil {
-	// 	return err
-	// }
-	// for _, t := range triggers {
-	// 	if t.Spec.Broker == name {
-	// 		// Don't modify informers copy
-	// 		trigger := t.DeepCopy()
-	// 		trigger.Status.InitializeConditions()
-	// 		if bs == nil {
-	// 			trigger.Status.MarkBrokerFailed("BrokerDoesNotExist", "Broker %q does not exist", name)
-	// 		} else {
-	// 			//TODO types
-	// 			//trigger.Status.PropagateBrokerStatus(bs.BrokerStatus)
-	// 		}
-	// 		if _, updateStatusErr := r.updateTriggerStatus(ctx, trigger); updateStatusErr != nil {
-	// 			logging.FromContext(ctx).Error("Failed to update Trigger status", zap.Error(updateStatusErr))
-	// 			r.Recorder.Eventf(trigger, corev1.EventTypeWarning, triggerUpdateStatusFailed, "Failed to update Trigger's status: %v", updateStatusErr)
-	// 			return updateStatusErr
-	// 		}
-	// 	}
-	// }
+func (r *Reconciler) updateTargetsConfig(ctx context.Context) error {
+	logger := r.Logger.Desugar()
+	//TODO resources package?
+	data, err := r.targetsConfig.Bytes()
+	if err != nil {
+		return fmt.Errorf("error serializing targets config: %w", err)
+	}
+	desired := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      targetsCMName,
+			Namespace: targetsCMNamespace,
+		},
+		BinaryData: map[string][]byte{targetsCMKey: data},
+	}
+
+	logger.Debug("Current targets config", zap.Any("targetsConfig", r.targetsConfig.String()))
+
+	existing, err := r.configMapLister.ConfigMaps(desired.Namespace).Get(desired.Name)
+	if errors.IsNotFound(err) {
+		logger.Debug("Creating targets ConfigMap", zap.String("namespace", desired.Namespace), zap.String("name", desired.Name))
+		_, err = r.KubeClientSet.CoreV1().ConfigMaps(desired.Namespace).Create(desired)
+		if err != nil {
+			return fmt.Errorf("error creating targets ConfigMap: %w", err)
+		}
+	} else if err != nil {
+		return fmt.Errorf("error getting targets ConfigMap: %w", err)
+	}
+
+	logger.Debug("Compare targets ConfigMap", zap.Any("existing", base64.StdEncoding.EncodeToString(existing.BinaryData[targetsCMKey])), zap.String("desired", base64.StdEncoding.EncodeToString(desired.BinaryData[targetsCMKey])))
+	if !equality.Semantic.DeepEqual(desired.BinaryData, existing.BinaryData) {
+		logger.Debug("Updating targets ConfigMap")
+		_, err = r.KubeClientSet.CoreV1().ConfigMaps(desired.Namespace).Update(desired)
+		if err != nil {
+			return fmt.Errorf("error updating targets ConfigMap: %w", err)
+		}
+	}
 	return nil
+}
+
+func (r *Reconciler) TargetsConfigUpdater(ctx context.Context) {
+	// check every 10 seconds
+	ticker := time.NewTicker(targetsCMResyncPeriod)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-r.targetsNeedsUpdate:
+			if err := r.updateTargetsConfig(ctx); err != nil {
+				r.Logger.Error("Error in TargetsConfigUpdater: %w", err)
+			}
+		case <-ticker.C:
+			if err := r.updateTargetsConfig(ctx); err != nil {
+				r.Logger.Error("Error in TargetsConfigUpdater: %w", err)
+			}
+		}
+	}
+}
+
+func (r *Reconciler) flagTargetsForUpdate() {
+	select {
+	case r.targetsNeedsUpdate <- struct{}{}:
+		r.Logger.Debug("Flagged targets for update")
+	default:
+		r.Logger.Debug("Flagged targets for update but already flagged")
+	}
 }

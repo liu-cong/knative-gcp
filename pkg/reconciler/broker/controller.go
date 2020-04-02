@@ -70,8 +70,12 @@ func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl 
 		CreateClientFn:  gpubsub.NewClient,
 		brokerClass:     brokerv1beta1.BrokerClass,
 		//TODO use NewEmptyTargets()
-		targetsConfig: targetsConfig,
+		targetsConfig:      targetsConfig,
+		targetsNeedsUpdate: make(chan struct{}),
 	}
+
+	go r.TargetsConfigUpdater(ctx)
+
 	impl := brokerreconciler.NewImpl(ctx, r)
 
 	tr := &TriggerReconciler{
@@ -113,6 +117,20 @@ func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl 
 		Handler:    controller.HandleAll(impl.EnqueueLabelOfNamespaceScopedResource("" /*any namespace*/, eventing.BrokerLabelKey)),
 	})
 
+	//TODO Also reconcile triggers when their broker doesn't exist. Maybe use a
+	// synthetic broker and call reconcileTriggers anyway?
+	// How do we do this? We can check the lister to see if the broker exists
+	// and do something different if it does not, but that still allows the
+	// broker to be deleted while the reconcile is in the queue. Need a workaround
+	// for the gen reconciler not reconciling when the reconciled object doesn't exist.
+
+	// Maybe we need to override the genreconciler's Reconcile method to go ahead and reconcile
+	// if the broker doesn't exist.
+
+	// Is there a race if we create a separate controller for the trigger reconciler?
+	// Yes, because the broker and trigger controller could be reconciling at the same time
+	// If we want the broker controller to continue being responsible for reconciling all triggers,
+	// we need the ability to reconcile objects that don't exist
 	triggerInformer.Informer().AddEventHandler(controller.HandleAll(
 		func(obj interface{}) {
 			if trigger, ok := obj.(*brokerv1beta1.Trigger); ok {
