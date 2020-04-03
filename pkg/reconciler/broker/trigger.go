@@ -129,7 +129,7 @@ func (r *TriggerReconciler) ReconcileKind(ctx context.Context, t *brokerv1beta1.
 		} else {
 			target.State = config.State_UNKNOWN
 		}
-		m.InsertTargets(target)
+		m.UpsertTargets(target)
 	})
 
 	return triggerNewReconciledNormal(t.Namespace, t.Name)
