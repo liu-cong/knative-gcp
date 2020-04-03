@@ -395,6 +395,8 @@ func (r *Reconciler) updateTargetsConfig(ctx context.Context) error {
 			Namespace: targetsCMNamespace,
 		},
 		BinaryData: map[string][]byte{targetsCMKey: data},
+		// For debugging purposes
+		Data: map[string]string{"targets.txt": r.targetsConfig.String()},
 	}
 
 	logger.Debug("Current targets config", zap.Any("targetsConfig", r.targetsConfig.String()))
