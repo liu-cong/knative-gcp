@@ -74,6 +74,7 @@ func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl 
 		targetsNeedsUpdate: make(chan struct{}),
 	}
 
+	// Start the single thread updating the targets configmap
 	go r.TargetsConfigUpdater(ctx)
 
 	impl := brokerreconciler.NewImpl(ctx, r)

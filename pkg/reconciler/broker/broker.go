@@ -20,10 +20,12 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"sync"
 	"time"
 
 	brokerv1beta1 "github.com/google/knative-gcp/pkg/apis/broker/v1beta1"
 	"github.com/google/knative-gcp/pkg/broker/config"
+	"github.com/google/knative-gcp/pkg/broker/config/memory"
 	brokerreconciler "github.com/google/knative-gcp/pkg/client/injection/reconciler/broker/v1beta1/broker"
 	brokerlisters "github.com/google/knative-gcp/pkg/client/listers/broker/v1beta1"
 	gpubsub "github.com/google/knative-gcp/pkg/gclient/pubsub"
@@ -90,9 +92,8 @@ type Reconciler struct {
 	brokerClass string
 
 	// TODO allow configuring multiples of these
-	// TODO load from existing config in a sync.Once? To avoid losing config
-	// as initial resync occurs.
-	targetsConfig config.Targets
+	targetsConfig  config.Targets
+	loadConfigOnce sync.Once
 
 	// targetsNeedsUpdate is a channel that flags the targets ConfigMap as
 	// needing update. This is done in a separate goroutine to avoid contention
@@ -382,8 +383,16 @@ func (r *Reconciler) reconcileTriggers(ctx context.Context, b *brokerv1beta1.Bro
 	return err
 }
 
+//TODO all this stuff should be in a configmap variant of the config object
+
+// This function is not thread-safe and should only be executed by
+// TargetsConfigUpdater
 func (r *Reconciler) updateTargetsConfig(ctx context.Context) error {
 	logger := r.Logger.Desugar()
+
+	//Load the existing config first if it exists
+	//TODO retry?
+	r.loadConfigOnce.Do(func() { r.loadTargetsConfig(ctx) })
 	//TODO resources package?
 	data, err := r.targetsConfig.Bytes()
 	if err != nil {
@@ -423,13 +432,31 @@ func (r *Reconciler) updateTargetsConfig(ctx context.Context) error {
 	return nil
 }
 
+func (r *Reconciler) loadTargetsConfig(ctx context.Context) error {
+	r.Logger.Debug("Loading targets config from configmap")
+	existing, err := r.configMapLister.ConfigMaps(targetsCMNamespace).Get(targetsCMName)
+	if err != nil {
+		return fmt.Errorf("error getting targets ConfigMap: %w", err)
+	}
+
+	targets, err := memory.NewTargetsFromBytes(existing.BinaryData[targetsCMKey])
+	if err != nil {
+		return fmt.Errorf("error loading targets from ConfigMap: %w", err)
+	}
+	r.targetsConfig = targets
+	r.Logger.Debugw("Loaded targets config from ConfigMap", zap.String("resourceVersion", existing.ResourceVersion))
+	return nil
+}
+
 func (r *Reconciler) TargetsConfigUpdater(ctx context.Context) {
-	// check every 10 seconds
+	r.Logger.Debug("Starting TargetsConfigUpdater")
+	// check every 10 seconds even if no reconciles have occurred
 	ticker := time.NewTicker(targetsCMResyncPeriod)
 
 	for {
 		select {
 		case <-ctx.Done():
+			r.Logger.Debug("Stopping TargetsConfigUpdater")
 			return
 		case <-r.targetsNeedsUpdate:
 			if err := r.updateTargetsConfig(ctx); err != nil {
