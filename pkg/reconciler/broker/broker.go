@@ -349,11 +349,15 @@ func (r *Reconciler) deleteDecouplingTopicAndSubscription(ctx context.Context, b
 // reconcileTriggers reconciles the Triggers that are pointed to this broker
 func (r *Reconciler) reconcileTriggers(ctx context.Context, b *brokerv1beta1.Broker) error {
 
-	// TODO: Figure out the labels stuff... If webhook does it, we can filter like this...
-	// Find all the Triggers that have been labeled as belonging to me
-	/*
-		triggers, err := r.triggerLister.Triggers(b.Namespace).List(labels.SelectorFromSet(brokerLabels(b.brokerClass)))
-	*/
+	// TODO(grantr): We could filter by `eventing.knative.dev/broker: name` here
+	// to get only the triggers for this broker. The problem is that if users
+	// change the label themselves, that trigger won't get reconciled even
+	// though the broker field value is correct.
+	//
+	// Since this query is going to the lister instead of the apiserver, adding
+	// a label selector here is just moving the client-side filter to a
+	// different place with equivalent efficiency. Instead, list all triggers
+	// in the namespace and
 	triggers, err := r.triggerLister.Triggers(b.Namespace).List(labels.Everything())
 	if err != nil {
 		return err

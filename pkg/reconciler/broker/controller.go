@@ -29,7 +29,6 @@ import (
 	"github.com/google/knative-gcp/pkg/reconciler"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/cache"
-	"knative.dev/eventing/pkg/apis/eventing"
 	eventingv1beta1 "knative.dev/eventing/pkg/apis/eventing/v1beta1"
 	"knative.dev/eventing/pkg/duck"
 	"knative.dev/pkg/client/injection/ducks/duck/v1/addressable"
@@ -98,17 +97,22 @@ func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl 
 		Handler:    controller.HandleAll(impl.Enqueue),
 	})
 
-	configMapInformer.Informer().AddEventHandler(cache.FilteringResourceEventHandler{
-		FilterFunc: pkgreconciler.LabelExistsFilterFunc(eventing.BrokerLabelKey),
-		Handler:    controller.HandleAll(impl.EnqueueLabelOfNamespaceScopedResource("" /*any namespace*/, eventing.BrokerLabelKey)),
-	})
+	// Don't watch the targets configmap because it would require reconciling
+	// all brokers every update. In normal operation this
+	// will never be modified except by the controller. The global resync
+	// will resync all brokers every 5 minutes, correcting any issues caused
+	// by users.
+	//configMapInformer.Informer().AddEventHandler(cache.FilteringResourceEventHandler{
+	//	FilterFunc: pkgreconciler.LabelExistsFilterFunc(eventing.BrokerLabelKey),
+	//	Handler:    controller.HandleAll(impl.EnqueueLabelOfNamespaceScopedResource("" /*any namespace*/, eventing.BrokerLabelKey)),
+	//})
 
 	//TODO https://github.com/knative/eventing/pull/2779/files
-	//TODO this won't work if there's a shared service
-	endpointsInformer.Informer().AddEventHandler(cache.FilteringResourceEventHandler{
-		FilterFunc: pkgreconciler.LabelExistsFilterFunc(eventing.BrokerLabelKey),
-		Handler:    controller.HandleAll(impl.EnqueueLabelOfNamespaceScopedResource("" /*any namespace*/, eventing.BrokerLabelKey)),
-	})
+	//TODO Need to watch only the shared ingress
+	// endpointsInformer.Informer().AddEventHandler(cache.FilteringResourceEventHandler{
+	// 	FilterFunc: pkgreconciler.LabelExistsFilterFunc(eventing.BrokerLabelKey),
+	// 	Handler:    controller.HandleAll(impl.EnqueueLabelOfNamespaceScopedResource("" /*any namespace*/, eventing.BrokerLabelKey)),
+	// })
 
 	//TODO Also reconcile triggers when their broker doesn't exist. Maybe use a
 	// synthetic broker and call reconcileTriggers anyway?
