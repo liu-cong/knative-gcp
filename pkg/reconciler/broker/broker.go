@@ -136,11 +136,11 @@ func (r *Reconciler) FinalizeKind(ctx context.Context, b *brokerv1beta1.Broker) 
 	// Reconcile triggers so they update their status
 	if err := r.reconcileTriggers(ctx, b); err != nil {
 		logger.Error("Problem reconciling triggers", zap.Error(err))
-		return fmt.Errorf("failed to reconcile triggers: %w", b.Namespace, b.Name, err)
+		return fmt.Errorf("failed to reconcile triggers: %w", err)
 	}
 
 	if err := r.deleteDecouplingTopicAndSubscription(ctx, b); err != nil {
-		return fmt.Errorf("Failed to delete Pub/Sub topic: %w", b.Namespace, b.Name, err)
+		return fmt.Errorf("Failed to delete Pub/Sub topic: %w", err)
 	}
 
 	// TODO should we also delete the broker from the config? Maybe better
