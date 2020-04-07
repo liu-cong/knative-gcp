@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gogo/protobuf/proto"
 	brokerv1beta1 "github.com/google/knative-gcp/pkg/apis/broker/v1beta1"
 	"github.com/google/knative-gcp/pkg/broker/config"
 	"github.com/google/knative-gcp/pkg/broker/config/memory"
@@ -429,12 +430,14 @@ func (r *Reconciler) loadTargetsConfig(ctx context.Context) error {
 		return fmt.Errorf("error getting targets ConfigMap: %w", err)
 	}
 
-	targets, err := memory.NewTargetsFromBytes(existing.BinaryData[targetsCMKey])
-	if err != nil {
-		return fmt.Errorf("error loading targets from ConfigMap: %w", err)
+	targets := &config.TargetsConfig{}
+	data := existing.BinaryData[targetsCMKey]
+	if err := proto.Unmarshal(data, targets); err != nil {
+		return err
 	}
-	r.targetsConfig = targets
-	r.Logger.Debugw("Loaded targets config from ConfigMap", zap.String("resourceVersion", existing.ResourceVersion))
+
+	r.targetsConfig = memory.NewTargets(targets)
+	r.Logger.Debug("Loaded targets config from ConfigMap", zap.String("resourceVersion", existing.ResourceVersion))
 	return nil
 }
 
