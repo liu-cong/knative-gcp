@@ -87,10 +87,6 @@ type Reconciler struct {
 	// Reconciles a broker's triggers
 	triggerReconciler controller.Reconciler
 
-	// If specified, only reconcile brokers with these labels
-	//TODO(grantr): seems to be unused?
-	brokerClass string
-
 	// TODO allow configuring multiples of these
 	targetsConfig  config.Targets
 	loadConfigOnce sync.Once

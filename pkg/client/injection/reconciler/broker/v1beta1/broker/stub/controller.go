@@ -23,9 +23,11 @@ import (
 
 	broker "github.com/google/knative-gcp/pkg/client/injection/informers/broker/v1beta1/broker"
 	v1beta1broker "github.com/google/knative-gcp/pkg/client/injection/reconciler/broker/v1beta1/broker"
+	cache "k8s.io/client-go/tools/cache"
 	configmap "knative.dev/pkg/configmap"
 	controller "knative.dev/pkg/controller"
 	logging "knative.dev/pkg/logging"
+	reconciler "knative.dev/pkg/reconciler"
 )
 
 // TODO: PLEASE COPY AND MODIFY THIS FILE AS A STARTING POINT
@@ -39,14 +41,21 @@ func NewController(
 
 	brokerInformer := broker.Get(ctx)
 
+	classValue := "default" // TODO: update this to the appropriate value.
+	classFilter := reconciler.AnnotationFilterFunc(v1beta1broker.ClassAnnotationKey, classValue, false /*allowUnset*/)
+
 	// TODO: setup additional informers here.
+	// TODO: remember to use the classFilter from above to filter appropriately.
 
 	r := &Reconciler{}
-	impl := v1beta1broker.NewImpl(ctx, r)
+	impl := v1beta1broker.NewImpl(ctx, r, classValue)
 
 	logger.Info("Setting up event handlers.")
 
-	brokerInformer.Informer().AddEventHandler(controller.HandleAll(impl.Enqueue))
+	brokerInformer.Informer().AddEventHandler(cache.FilteringResourceEventHandler{
+		FilterFunc: classFilter,
+		Handler:    controller.HandleAll(impl.Enqueue),
+	})
 
 	// TODO: add additional informer event handlers here.
 

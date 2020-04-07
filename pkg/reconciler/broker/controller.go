@@ -68,7 +68,6 @@ func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl 
 		configMapLister: configMapInformer.Lister(),
 		endpointsLister: endpointsInformer.Lister(),
 		CreateClientFn:  gpubsub.NewClient,
-		brokerClass:     brokerv1beta1.BrokerClass,
 		//TODO use NewEmptyTargets()
 		targetsConfig:      targetsConfig,
 		targetsNeedsUpdate: make(chan struct{}),
@@ -77,7 +76,7 @@ func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl 
 	// Start the single thread updating the targets configmap
 	go r.TargetsConfigUpdater(ctx)
 
-	impl := brokerreconciler.NewImpl(ctx, r)
+	impl := brokerreconciler.NewImpl(ctx, r, brokerv1beta1.BrokerClass)
 
 	tr := &TriggerReconciler{
 		Base:           reconciler.NewBase(ctx, controllerAgentName, cmw),
@@ -102,6 +101,7 @@ func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl 
 	tr.uriResolver = resolver.NewURIResolver(ctx, impl.EnqueueKey)
 
 	brokerInformer.Informer().AddEventHandler(cache.FilteringResourceEventHandler{
+		// Only reconcile brokers with the proper class annotation
 		FilterFunc: pkgreconciler.AnnotationFilterFunc(eventingv1beta1.BrokerClassAnnotationKey, brokerv1beta1.BrokerClass, false /*allowUnset*/),
 		Handler:    controller.HandleAll(impl.Enqueue),
 	})
