@@ -42,8 +42,11 @@ import (
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"knative.dev/eventing/pkg/logging"
+	"knative.dev/eventing/pkg/reconciler/names"
+	"knative.dev/pkg/apis"
 	"knative.dev/pkg/controller"
 	pkgreconciler "knative.dev/pkg/reconciler"
+	"knative.dev/pkg/system"
 )
 
 const (
@@ -55,10 +58,11 @@ const (
 	topicDeleted         = "TopicDeleted"
 	subDeleted           = "SubscriptionDeleted"
 
-	targetsCMNamespace    = "cloud-run-events"
 	targetsCMName         = "broker-targets"
 	targetsCMKey          = "targets"
 	targetsCMResyncPeriod = 10 * time.Second
+
+	ingressServiceName = "broker-ingress"
 )
 
 // TODO
@@ -158,6 +162,24 @@ func (r *Reconciler) reconcileBroker(ctx context.Context, b *brokerv1beta1.Broke
 	if err := r.reconcileDecouplingTopicAndSubscription(ctx, b); err != nil {
 		return fmt.Errorf("Decoupling topic reconcile failed: %w", err)
 	}
+
+	//TODO in a webhook annotate the broker object with its ingress details
+	// Route to shared ingress with namespace/name in the path as the broker
+	// identifier.
+	b.Status.SetAddress(&apis.URL{
+		Scheme: "http",
+		Host:   names.ServiceHostName("broker-ingress", system.Namespace()),
+		Path:   fmt.Sprintf("/%s/%s", b.Namespace, b.Name),
+	})
+
+	// Verify the ingress service is healthy via endpoints.
+	ingressEndpoints, err := r.endpointsLister.Endpoints(system.Namespace()).Get(ingressServiceName)
+	if err != nil {
+		logger.Error("Problem getting endpoints for ingress", zap.String("namespace", system.Namespace()), zap.Error(err))
+		b.Status.MarkIngressFailed("ServiceFailure", "%v", err)
+		return err
+	}
+	b.Status.PropagateIngressAvailability(ingressEndpoints)
 
 	r.targetsConfig.MutateBroker(b.Namespace, b.Name, func(m config.BrokerMutation) {
 		m.SetID(string(b.UID))
@@ -392,7 +414,7 @@ func (r *Reconciler) updateTargetsConfig(ctx context.Context) error {
 	desired := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      targetsCMName,
-			Namespace: targetsCMNamespace,
+			Namespace: system.Namespace(),
 		},
 		BinaryData: map[string][]byte{targetsCMKey: data},
 		// Write out the text version for debugging purposes only
@@ -426,7 +448,7 @@ func (r *Reconciler) updateTargetsConfig(ctx context.Context) error {
 func (r *Reconciler) loadTargetsConfig(ctx context.Context) error {
 	r.Logger.Debug("Loading targets config from configmap")
 	//TODO retry with wait.ExponentialBackoff
-	existing, err := r.configMapLister.ConfigMaps(targetsCMNamespace).Get(targetsCMName)
+	existing, err := r.configMapLister.ConfigMaps(system.Namespace()).Get(targetsCMName)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			r.targetsConfig = memory.NewEmptyTargets()

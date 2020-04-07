@@ -17,12 +17,15 @@ limitations under the License.
 package v1beta1
 
 import (
+	corev1 "k8s.io/api/core/v1"
+	"knative.dev/eventing/pkg/apis/duck"
 	"knative.dev/pkg/apis"
 )
 
 var brokerCondSet = apis.NewLivingConditionSet(
 	BrokerConditionTopic,
 	BrokerConditionSubscription,
+	BrokerConditionIngress,
 	BrokerConditionAddressable,
 )
 
@@ -30,6 +33,7 @@ const (
 	BrokerConditionReady                           = apis.ConditionReady
 	BrokerConditionTopic        apis.ConditionType = "TopicReady"
 	BrokerConditionSubscription apis.ConditionType = "SubscriptionReady"
+	BrokerConditionIngress      apis.ConditionType = "IngressReady"
 	BrokerConditionAddressable  apis.ConditionType = "Addressable"
 )
 
@@ -67,6 +71,18 @@ func (bs *BrokerStatus) MarkSubscriptionFailed(reason, format string, args ...in
 
 func (bs *BrokerStatus) MarkSubscriptionReady() {
 	brokerCondSet.Manage(bs).MarkTrue(BrokerConditionSubscription)
+}
+
+func (bs *BrokerStatus) MarkIngressFailed(reason, format string, args ...interface{}) {
+	brokerCondSet.Manage(bs).MarkFalse(BrokerConditionIngress, reason, format, args...)
+}
+
+func (bs *BrokerStatus) PropagateIngressAvailability(ep *corev1.Endpoints) {
+	if duck.EndpointsAreAvailable(ep) {
+		brokerCondSet.Manage(bs).MarkTrue(BrokerConditionIngress)
+	} else {
+		bs.MarkIngressFailed("EndpointsUnavailable", "Endpoints %q are unavailable.", ep.Name)
+	}
 }
 
 // SetAddress makes this Broker addressable by setting the hostname. It also
