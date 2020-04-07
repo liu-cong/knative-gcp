@@ -57,7 +57,7 @@ const (
 
 	targetsCMNamespace    = "cloud-run-events"
 	targetsCMName         = "broker-targets"
-	targetsCMKey          = "targets.pb"
+	targetsCMKey          = "targets"
 	targetsCMResyncPeriod = 10 * time.Second
 )
 
