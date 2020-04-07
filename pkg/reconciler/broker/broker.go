@@ -198,8 +198,6 @@ func (r *Reconciler) reconcileDecouplingTopicAndSubscription(ctx context.Context
 	// Set the projectID in the status.
 	b.Status.ProjectID = projectID
 
-	// Auth to GCP is handled by having the GOOGLE_APPLICATION_CREDENTIALS environment variable
-	// pointing at a credential file.
 	client, err := r.CreateClientFn(ctx, projectID)
 	if err != nil {
 		logger.Error("Failed to create Pub/Sub client", zap.Error(err))
