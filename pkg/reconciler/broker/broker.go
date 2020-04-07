@@ -382,8 +382,14 @@ func (r *Reconciler) reconcileTriggers(ctx context.Context, b *brokerv1beta1.Bro
 // TargetsConfigUpdater
 func (r *Reconciler) updateTargetsConfig(ctx context.Context) error {
 	//Load the existing config first if it exists
-	//TODO retry?
-	r.loadConfigOnce.Do(func() { r.loadTargetsConfig(ctx) })
+	r.loadConfigOnce.Do(func() {
+		if err := r.loadTargetsConfig(ctx); err != nil {
+			r.Logger.Error("error loading targets config", zap.Error(err))
+			// For some reason the targets config is corrupt, proceed with an
+			// empty one
+			r.targetsConfig = memory.NewEmptyTargets()
+		}
+	})
 	//TODO resources package?
 	data, err := r.targetsConfig.Bytes()
 	if err != nil {
@@ -425,8 +431,13 @@ func (r *Reconciler) updateTargetsConfig(ctx context.Context) error {
 
 func (r *Reconciler) loadTargetsConfig(ctx context.Context) error {
 	r.Logger.Debug("Loading targets config from configmap")
+	//TODO retry with wait.ExponentialBackoff
 	existing, err := r.configMapLister.ConfigMaps(targetsCMNamespace).Get(targetsCMName)
 	if err != nil {
+		if errors.IsNotFound(err) {
+			r.targetsConfig = memory.NewEmptyTargets()
+			return nil
+		}
 		return fmt.Errorf("error getting targets ConfigMap: %w", err)
 	}
 
