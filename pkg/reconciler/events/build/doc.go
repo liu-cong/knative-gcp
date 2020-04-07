@@ -1,5 +1,5 @@
 /*
-Copyright 2020 The Knative Authors
+Copyright 2020 Google LLC
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -14,26 +14,5 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package testing
-
-import (
-	"fmt"
-
-	"knative.dev/pkg/source"
-)
-
-type MockStatsReporter struct {
-	EventCount int
-}
-
-func (r *MockStatsReporter) ReportEventCount(args *source.ReportArgs, responseCode int) error {
-	r.EventCount += 1
-	return nil
-}
-
-func (r *MockStatsReporter) ValidateEventCount(want int) error {
-	if r.EventCount != want {
-		return fmt.Errorf("expected %d for metric, got %d", want, r.EventCount)
-	}
-	return nil
-}
+// Package channel implements the CloudBuildSource controller.
+package build
