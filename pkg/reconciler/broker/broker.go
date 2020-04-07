@@ -111,14 +111,14 @@ func newReconciledNormal(namespace, name string) pkgreconciler.Event {
 func (r *Reconciler) ReconcileKind(ctx context.Context, b *brokerv1beta1.Broker) pkgreconciler.Event {
 	if err := r.reconcileBroker(ctx, b); err != nil {
 		logging.FromContext(ctx).Error("Problem reconciling broker", zap.Error(err))
-		return fmt.Errorf("failed to reconcile broker: %v", err)
+		return fmt.Errorf("failed to reconcile broker: %w", err)
 		//TODO instead of returning on error, update the data plane configmap with
 		// whatever info is available. or put this in a defer?
 	}
 
 	if err := r.reconcileTriggers(ctx, b); err != nil {
 		logging.FromContext(ctx).Error("Problem reconciling triggers", zap.Error(err))
-		return fmt.Errorf("failed to reconcile triggers: %v", err)
+		return fmt.Errorf("failed to reconcile triggers: %w", err)
 	}
 
 	logging.FromContext(ctx).Info("targetsConfig", zap.Any("cfg", r.targetsConfig.String()))
@@ -128,16 +128,16 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, b *brokerv1beta1.Broker)
 
 func (r *Reconciler) FinalizeKind(ctx context.Context, b *brokerv1beta1.Broker) pkgreconciler.Event {
 	logger := logging.FromContext(ctx)
-	logger.Debug("Finalizing Broker")
+	logger.Debug("Finalizing Broker", zap.Any("broker", b))
 
 	// Reconcile triggers so they update their status
 	if err := r.reconcileTriggers(ctx, b); err != nil {
 		logger.Error("Problem reconciling triggers", zap.Error(err))
-		return fmt.Errorf("failed to reconcile triggers: %v", err)
+		return fmt.Errorf("failed to reconcile triggers: %w", b.Namespace, b.Name, err)
 	}
 
 	if err := r.deleteDecouplingTopicAndSubscription(ctx, b); err != nil {
-		return fmt.Errorf("Failed to delete Pub/Sub topic: %v", err)
+		return fmt.Errorf("Failed to delete Pub/Sub topic: %w", b.Namespace, b.Name, err)
 	}
 
 	// TODO should we also delete the broker from the config? Maybe better
@@ -395,7 +395,7 @@ func (r *Reconciler) updateTargetsConfig(ctx context.Context) error {
 			Namespace: targetsCMNamespace,
 		},
 		BinaryData: map[string][]byte{targetsCMKey: data},
-		// For debugging purposes
+		// Write out the text version for debugging purposes only
 		Data: map[string]string{"targets.txt": r.targetsConfig.String()},
 	}
 
