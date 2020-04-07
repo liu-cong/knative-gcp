@@ -189,8 +189,7 @@ func (r *Reconciler) reconcileBroker(ctx context.Context, b *brokerv1beta1.Broke
 func (r *Reconciler) reconcileDecouplingTopicAndSubscription(ctx context.Context, b *brokerv1beta1.Broker) error {
 	logger := logging.FromContext(ctx).Desugar()
 	logger.Debug("Reconciling decoupling topic")
-	// get ProjectID from config or metadata
-	//TODO(grantr) support configuring project in broker config
+	// get ProjectID from metadata
 	projectID, err := utils.ProjectID("")
 	if err != nil {
 		logger.Error("Failed to find project id", zap.Error(err))
@@ -298,8 +297,7 @@ func (r *Reconciler) deleteDecouplingTopicAndSubscription(ctx context.Context, b
 	logger := logging.FromContext(ctx).Desugar()
 	logger.Debug("Deleting decoupling topic")
 
-	// get ProjectID from config or metadata
-	//TODO(grantr) support configuring project in broker config
+	// get ProjectID from metadata
 	projectID, err := utils.ProjectID("")
 	if err != nil {
 		logger.Error("Failed to find project id", zap.Error(err))

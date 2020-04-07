@@ -180,8 +180,7 @@ func (r *TriggerReconciler) resolveSubscriber(ctx context.Context, t *brokerv1be
 func (r *TriggerReconciler) reconcileRetryTopicAndSubscription(ctx context.Context, trig *brokerv1beta1.Trigger) error {
 	logger := logging.FromContext(ctx).Desugar()
 	logger.Debug("Reconciling retry topic")
-	// get ProjectID from config or metadata
-	//TODO(grantr) support configuring project in broker config
+	// get ProjectID from metadata
 	projectID, err := utils.ProjectID("")
 	if err != nil {
 		logger.Error("Failed to find project id", zap.Error(err))
@@ -287,8 +286,7 @@ func (r *TriggerReconciler) deleteRetryTopicAndSubscription(ctx context.Context,
 	logger := logging.FromContext(ctx).Desugar()
 	logger.Debug("Deleting retry topic")
 
-	// get ProjectID from config or metadata
-	//TODO(grantr) support configuring project in broker config
+	// get ProjectID from metadata
 	projectID, err := utils.ProjectID("")
 	if err != nil {
 		logger.Error("Failed to find project id", zap.Error(err))
