@@ -34,7 +34,6 @@ import (
 	"github.com/google/knative-gcp/pkg/reconciler/broker/resources"
 	"github.com/google/knative-gcp/pkg/utils"
 	"go.uber.org/zap"
-	gstatus "google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -176,16 +175,15 @@ func (r *Reconciler) reconcileBroker(ctx context.Context, b *brokerv1beta1.Broke
 	})
 
 	// Update config map
+	// TODO should this happen in a defer so there's an update regardless of
+	// error status, or only when reconcile is successful?
 	r.flagTargetsForUpdate()
-
-	//TODO configmap cleanup: if any brokers are in deleted state with no triggers
-	// (or all triggers are in deleted state), remove that entry
 	return nil
 }
 
 func (r *Reconciler) reconcileDecouplingTopicAndSubscription(ctx context.Context, b *brokerv1beta1.Broker) error {
 	logger := logging.FromContext(ctx)
-	logger.Debug("Reconciling decoupling topic")
+	logger.Debug("Reconciling decoupling topic", zap.Any("broker", b))
 	// get ProjectID from metadata
 	projectID, err := utils.ProjectID("")
 	if err != nil {
@@ -225,14 +223,6 @@ func (r *Reconciler) reconcileDecouplingTopicAndSubscription(ctx context.Context
 		logger.Debug("Creating topic with cfg", zap.String("id", topicID), zap.Any("cfg", topicConfig))
 		topic, err = client.CreateTopicWithConfig(ctx, topicID, topicConfig)
 		if err != nil {
-			// For some reason (maybe some cache invalidation thing), sometimes t.Exists returns that the topic
-			// doesn't exist but it actually does. When we try to create it again, it fails with an AlreadyExists
-			// reason. We check for that error here. If it happens, then return nil.
-			if _, ok := gstatus.FromError(err); !ok {
-				logger.Error("Failed from Pub/Sub client while creating topic", zap.Error(err))
-				b.Status.MarkTopicFailed("CreationFailed", "Topic creation failed: %w", err)
-				return err
-			}
 			logger.Error("Failed to create Pub/Sub topic", zap.Error(err))
 			b.Status.MarkTopicFailed("CreationFailed", "Topic creation failed: %w", err)
 			return err
@@ -460,6 +450,9 @@ func (r *Reconciler) TargetsConfigUpdater(ctx context.Context) {
 	r.Logger.Debug("Starting TargetsConfigUpdater")
 	// check every 10 seconds even if no reconciles have occurred
 	ticker := time.NewTicker(targetsCMResyncPeriod)
+
+	//TODO configmap cleanup: if any brokers are in deleted state with no triggers
+	// (or all triggers are in deleted state), remove that entry
 
 	for {
 		select {
