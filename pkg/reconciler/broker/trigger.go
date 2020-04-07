@@ -34,8 +34,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"knative.dev/eventing/pkg/apis/eventing/v1alpha1"
 	"knative.dev/eventing/pkg/duck"
+	"knative.dev/eventing/pkg/logging"
 	duckv1 "knative.dev/pkg/apis/duck/v1"
-	"knative.dev/pkg/logging"
 	pkgreconciler "knative.dev/pkg/reconciler"
 	"knative.dev/pkg/resolver"
 )
@@ -166,7 +166,7 @@ func (r *TriggerReconciler) resolveSubscriber(ctx context.Context, t *brokerv1be
 	//TODO only do this when the broker exists? It works without a UID
 	subscriberURI, err := r.uriResolver.URIFromDestinationV1(t.Spec.Subscriber, b)
 	if err != nil {
-		logging.FromContext(ctx).Desugar().Error("Unable to get the Subscriber's URI", zap.Error(err))
+		logging.FromContext(ctx).Error("Unable to get the Subscriber's URI", zap.Error(err))
 		t.Status.MarkSubscriberResolvedFailed("Unable to get the Subscriber's URI", "%v", err)
 		t.Status.SubscriberURI = nil
 		return err
@@ -178,7 +178,7 @@ func (r *TriggerReconciler) resolveSubscriber(ctx context.Context, t *brokerv1be
 }
 
 func (r *TriggerReconciler) reconcileRetryTopicAndSubscription(ctx context.Context, trig *brokerv1beta1.Trigger) error {
-	logger := logging.FromContext(ctx).Desugar()
+	logger := logging.FromContext(ctx)
 	logger.Debug("Reconciling retry topic")
 	// get ProjectID from metadata
 	projectID, err := utils.ProjectID("")
@@ -281,7 +281,7 @@ func (r *TriggerReconciler) reconcileRetryTopicAndSubscription(ctx context.Conte
 }
 
 func (r *TriggerReconciler) deleteRetryTopicAndSubscription(ctx context.Context, trig *brokerv1beta1.Trigger) error {
-	logger := logging.FromContext(ctx).Desugar()
+	logger := logging.FromContext(ctx)
 	logger.Debug("Deleting retry topic")
 
 	// get ProjectID from metadata
@@ -380,7 +380,7 @@ func (r *TriggerReconciler) propagateDependencyReadiness(ctx context.Context, t 
 	// The dependency hasn't yet reconciled our latest changes to
 	// its desired state, so its conditions are outdated.
 	if dependency.GetGeneration() != dependency.Status.ObservedGeneration {
-		logging.FromContext(ctx).Desugar().Info("The ObjectMeta Generation of dependency is not equal to the observedGeneration of status",
+		logging.FromContext(ctx).Info("The ObjectMeta Generation of dependency is not equal to the observedGeneration of status",
 			zap.Any("objectMetaGeneration", dependency.GetGeneration()),
 			zap.Any("statusObservedGeneration", dependency.Status.ObservedGeneration))
 		t.Status.MarkDependencyUnknown("GenerationNotEqual", "The dependency's metadata.generation, %q, is not equal to its status.observedGeneration, %q.", dependency.GetGeneration(), dependency.Status.ObservedGeneration)

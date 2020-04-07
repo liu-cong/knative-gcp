@@ -41,8 +41,8 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
+	"knative.dev/eventing/pkg/logging"
 	"knative.dev/pkg/controller"
-	"knative.dev/pkg/logging"
 	pkgreconciler "knative.dev/pkg/reconciler"
 )
 
@@ -109,29 +109,29 @@ func newReconciledNormal(namespace, name string) pkgreconciler.Event {
 
 func (r *Reconciler) ReconcileKind(ctx context.Context, b *brokerv1beta1.Broker) pkgreconciler.Event {
 	if err := r.reconcileBroker(ctx, b); err != nil {
-		logging.FromContext(ctx).Desugar().Error("Problem reconciling broker", zap.Error(err))
+		logging.FromContext(ctx).Error("Problem reconciling broker", zap.Error(err))
 		return fmt.Errorf("failed to reconcile broker: %v", err)
 		//TODO instead of returning on error, update the data plane configmap with
 		// whatever info is available. or put this in a defer?
 	}
 
 	if err := r.reconcileTriggers(ctx, b); err != nil {
-		logging.FromContext(ctx).Desugar().Error("Problem reconciling triggers", zap.Error(err))
+		logging.FromContext(ctx).Error("Problem reconciling triggers", zap.Error(err))
 		return fmt.Errorf("failed to reconcile triggers: %v", err)
 	}
 
-	logging.FromContext(ctx).Desugar().Info("targetsConfig", zap.Any("cfg", r.targetsConfig.String()))
+	logging.FromContext(ctx).Info("targetsConfig", zap.Any("cfg", r.targetsConfig.String()))
 
 	return newReconciledNormal(b.Namespace, b.Name)
 }
 
 func (r *Reconciler) FinalizeKind(ctx context.Context, b *brokerv1beta1.Broker) pkgreconciler.Event {
-	logger := logging.FromContext(ctx).Desugar()
+	logger := logging.FromContext(ctx)
 	logger.Debug("Finalizing Broker")
 
 	// Reconcile triggers so they update their status
 	if err := r.reconcileTriggers(ctx, b); err != nil {
-		logging.FromContext(ctx).Desugar().Error("Problem reconciling triggers", zap.Error(err))
+		logger.Error("Problem reconciling triggers", zap.Error(err))
 		return fmt.Errorf("failed to reconcile triggers: %v", err)
 	}
 
@@ -148,7 +148,7 @@ func (r *Reconciler) FinalizeKind(ctx context.Context, b *brokerv1beta1.Broker) 
 }
 
 func (r *Reconciler) reconcileBroker(ctx context.Context, b *brokerv1beta1.Broker) error {
-	logger := logging.FromContext(ctx).Desugar()
+	logger := logging.FromContext(ctx)
 	logger.Debug("Reconciling Broker", zap.Any("broker", b))
 	b.Status.InitializeConditions()
 	b.Status.ObservedGeneration = b.Generation
@@ -183,7 +183,7 @@ func (r *Reconciler) reconcileBroker(ctx context.Context, b *brokerv1beta1.Broke
 }
 
 func (r *Reconciler) reconcileDecouplingTopicAndSubscription(ctx context.Context, b *brokerv1beta1.Broker) error {
-	logger := logging.FromContext(ctx).Desugar()
+	logger := logging.FromContext(ctx)
 	logger.Debug("Reconciling decoupling topic")
 	// get ProjectID from metadata
 	projectID, err := utils.ProjectID("")
@@ -288,7 +288,7 @@ func (r *Reconciler) reconcileDecouplingTopicAndSubscription(ctx context.Context
 }
 
 func (r *Reconciler) deleteDecouplingTopicAndSubscription(ctx context.Context, b *brokerv1beta1.Broker) error {
-	logger := logging.FromContext(ctx).Desugar()
+	logger := logging.FromContext(ctx)
 	logger.Debug("Deleting decoupling topic")
 
 	// get ProjectID from metadata
@@ -380,8 +380,6 @@ func (r *Reconciler) reconcileTriggers(ctx context.Context, b *brokerv1beta1.Bro
 // This function is not thread-safe and should only be executed by
 // TargetsConfigUpdater
 func (r *Reconciler) updateTargetsConfig(ctx context.Context) error {
-	logger := r.Logger.Desugar()
-
 	//Load the existing config first if it exists
 	//TODO retry?
 	r.loadConfigOnce.Do(func() { r.loadTargetsConfig(ctx) })
@@ -400,11 +398,11 @@ func (r *Reconciler) updateTargetsConfig(ctx context.Context) error {
 		Data: map[string]string{"targets.txt": r.targetsConfig.String()},
 	}
 
-	logger.Debug("Current targets config", zap.Any("targetsConfig", r.targetsConfig.String()))
+	r.Logger.Debug("Current targets config", zap.Any("targetsConfig", r.targetsConfig.String()))
 
 	existing, err := r.configMapLister.ConfigMaps(desired.Namespace).Get(desired.Name)
 	if errors.IsNotFound(err) {
-		logger.Debug("Creating targets ConfigMap", zap.String("namespace", desired.Namespace), zap.String("name", desired.Name))
+		r.Logger.Debug("Creating targets ConfigMap", zap.String("namespace", desired.Namespace), zap.String("name", desired.Name))
 		_, err = r.KubeClientSet.CoreV1().ConfigMaps(desired.Namespace).Create(desired)
 		if err != nil {
 			return fmt.Errorf("error creating targets ConfigMap: %w", err)
@@ -413,9 +411,9 @@ func (r *Reconciler) updateTargetsConfig(ctx context.Context) error {
 		return fmt.Errorf("error getting targets ConfigMap: %w", err)
 	}
 
-	logger.Debug("Compare targets ConfigMap", zap.Any("existing", base64.StdEncoding.EncodeToString(existing.BinaryData[targetsCMKey])), zap.String("desired", base64.StdEncoding.EncodeToString(desired.BinaryData[targetsCMKey])))
+	r.Logger.Debug("Compare targets ConfigMap", zap.Any("existing", base64.StdEncoding.EncodeToString(existing.BinaryData[targetsCMKey])), zap.String("desired", base64.StdEncoding.EncodeToString(desired.BinaryData[targetsCMKey])))
 	if !equality.Semantic.DeepEqual(desired.BinaryData, existing.BinaryData) {
-		logger.Debug("Updating targets ConfigMap")
+		r.Logger.Debug("Updating targets ConfigMap")
 		_, err = r.KubeClientSet.CoreV1().ConfigMaps(desired.Namespace).Update(desired)
 		if err != nil {
 			return fmt.Errorf("error updating targets ConfigMap: %w", err)
