@@ -18,6 +18,7 @@ package broker
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	brokerv1beta1 "github.com/google/knative-gcp/pkg/apis/broker/v1beta1"
@@ -26,6 +27,8 @@ import (
 	gpubsub "github.com/google/knative-gcp/pkg/gclient/pubsub/testing"
 	"github.com/google/knative-gcp/pkg/reconciler"
 	. "github.com/google/knative-gcp/pkg/reconciler/testing"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
 	"knative.dev/pkg/client/injection/ducks/duck/v1/addressable"
 	"knative.dev/pkg/configmap"
@@ -35,10 +38,15 @@ import (
 )
 
 const (
-	testNS = "testnamespace"
+	testNS     = "testnamespace"
+	brokerName = "test-broker"
 
 	testProject = "test-project-id"
 	generation  = 1
+)
+
+var (
+	testKey = fmt.Sprintf("%s/%s", testNS, brokerName)
 )
 
 func init() {
@@ -49,12 +57,56 @@ func init() {
 func TestAllCases(t *testing.T) {
 	table := TableTest{{
 		Name: "bad workqueue key",
-		// Make sure Reconcile handles bad keys.
-		Key: "too/many/parts",
+		Key:  "too/many/parts",
 	}, {
 		Name: "key not found",
-		// Make sure Reconcile handles good keys that don't exist.
-		Key: "foo/not-found",
+		Key:  testKey,
+	}, {
+		Name: "Broker is being deleted, no topic or sub exists",
+		Key:  testKey,
+		Objects: []runtime.Object{
+			NewBroker(brokerName, testNS,
+				WithBrokerClass(brokerv1beta1.BrokerClass),
+				WithInitBrokerConditions,
+				WithBrokerDeletionTimestamp),
+		},
+		WantEvents: []string{
+			Eventf(corev1.EventTypeNormal, "BrokerFinalized", `Broker finalized: "testnamespace/test-broker"`),
+		},
+		OtherTestData: map[string]interface{}{
+			"ps": gpubsub.TestClientData{
+				TopicData: gpubsub.TestTopicData{
+					Exists: false,
+				},
+				SubscriptionData: gpubsub.TestSubscriptionData{
+					Exists: false,
+				},
+			},
+		},
+	}, {
+		Name: "Broker is being deleted, topic and sub exists",
+		Key:  testKey,
+		Objects: []runtime.Object{
+			NewBroker(brokerName, testNS,
+				WithBrokerClass(brokerv1beta1.BrokerClass),
+				WithInitBrokerConditions,
+				WithBrokerDeletionTimestamp),
+		},
+		WantEvents: []string{
+			Eventf(corev1.EventTypeNormal, "TopicDeleted", `Deleted PubSub topic "cre-bkr_testnamespace_test-broker_"`),
+			Eventf(corev1.EventTypeNormal, "SubscriptionDeleted", `Deleted PubSub subscription "cre-bkr_testnamespace_test-broker_"`),
+			Eventf(corev1.EventTypeNormal, "BrokerFinalized", `Broker finalized: "testnamespace/test-broker"`),
+		},
+		OtherTestData: map[string]interface{}{
+			"ps": gpubsub.TestClientData{
+				TopicData: gpubsub.TestTopicData{
+					Exists: true,
+				},
+				SubscriptionData: gpubsub.TestSubscriptionData{
+					Exists: true,
+				},
+			},
+		},
 	}}
 
 	defer logtesting.ClearAll()
@@ -67,6 +119,7 @@ func TestAllCases(t *testing.T) {
 			configMapLister:    listers.GetConfigMapLister(),
 			CreateClientFn:     gpubsub.TestClientCreator(testData["ps"]),
 			targetsNeedsUpdate: make(chan struct{}),
+			projectID:          testProject,
 		}
 		return brokerreconciler.NewReconciler(ctx, r.Logger, r.RunClientSet, listers.GetBrokerLister(), r.Recorder, r, brokerv1beta1.BrokerClass)
 	}))

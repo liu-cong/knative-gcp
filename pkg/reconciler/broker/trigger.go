@@ -43,6 +43,7 @@ import (
 const (
 	// Name of the corev1.Events emitted from the Trigger reconciliation process.
 	triggerReconciled         = "TriggerReconciled"
+	triggerFinalized          = "TriggerFinalized"
 	triggerReadinessChanged   = "TriggerReadinessChanged"
 	triggerReconcileFailed    = "TriggerReconcileFailed"
 	triggerUpdateStatusFailed = "TriggerUpdateStatusFailed"
@@ -66,10 +67,6 @@ type TriggerReconciler struct {
 // Check that TriggerReconciler implements Interface
 var _ triggerreconciler.Interface = (*TriggerReconciler)(nil)
 var _ triggerreconciler.Finalizer = (*TriggerReconciler)(nil)
-
-func triggerNewReconciledNormal(namespace, name string) pkgreconciler.Event {
-	return pkgreconciler.NewEvent(corev1.EventTypeNormal, triggerReconciled, "Trigger reconciled: \"%s/%s\"", namespace, name)
-}
 
 func (r *TriggerReconciler) ReconcileKind(ctx context.Context, t *brokerv1beta1.Trigger) pkgreconciler.Event {
 	b := brokerFromContext(ctx)
@@ -132,7 +129,7 @@ func (r *TriggerReconciler) ReconcileKind(ctx context.Context, t *brokerv1beta1.
 		m.UpsertTargets(target)
 	})
 
-	return triggerNewReconciledNormal(t.Namespace, t.Name)
+	return pkgreconciler.NewEvent(corev1.EventTypeNormal, triggerReconciled, "Trigger reconciled: \"%s/%s\"", t.Namespace, t.Name)
 }
 
 func (r *TriggerReconciler) FinalizeKind(ctx context.Context, t *brokerv1beta1.Trigger) pkgreconciler.Event {
@@ -153,7 +150,8 @@ func (r *TriggerReconciler) FinalizeKind(ctx context.Context, t *brokerv1beta1.T
 		})
 	})
 
-	return triggerNewReconciledNormal(t.Namespace, t.Name)
+	return pkgreconciler.NewEvent(corev1.EventTypeNormal, triggerFinalized, "Trigger finalized: \"%s/%s\"", t.Namespace, t.Name)
+
 }
 
 func (r *TriggerReconciler) resolveSubscriber(ctx context.Context, t *brokerv1beta1.Trigger, b *brokerv1beta1.Broker) error {
@@ -181,6 +179,7 @@ func (r *TriggerReconciler) reconcileRetryTopicAndSubscription(ctx context.Conte
 	logger := logging.FromContext(ctx)
 	logger.Debug("Reconciling retry topic")
 	// get ProjectID from metadata
+	//TODO get from context
 	projectID, err := utils.ProjectID("")
 	if err != nil {
 		logger.Error("Failed to find project id", zap.Error(err))
@@ -285,6 +284,7 @@ func (r *TriggerReconciler) deleteRetryTopicAndSubscription(ctx context.Context,
 	logger.Debug("Deleting retry topic")
 
 	// get ProjectID from metadata
+	//TODO get from context
 	projectID, err := utils.ProjectID("")
 	if err != nil {
 		logger.Error("Failed to find project id", zap.Error(err))

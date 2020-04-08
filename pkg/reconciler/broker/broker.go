@@ -53,6 +53,7 @@ const (
 	// Name of the corev1.Events emitted from the Broker reconciliation process.
 	brokerReconcileError = "BrokerReconcileError"
 	brokerReconciled     = "BrokerReconciled"
+	brokerFinalized      = "BrokerFinalized"
 	topicCreated         = "TopicCreated"
 	subCreated           = "SubscriptionCreated"
 	topicDeleted         = "TopicDeleted"
@@ -99,6 +100,10 @@ type Reconciler struct {
 	// needing update. This is done in a separate goroutine to avoid contention
 	// between multiple controller workers.
 	targetsNeedsUpdate chan struct{}
+
+	// projectID is used as the GCP project ID when present, skipping the
+	// metadata server check. Used by tests.
+	projectID string
 }
 
 // Check that Reconciler implements Interface
@@ -106,10 +111,6 @@ var _ brokerreconciler.Interface = (*Reconciler)(nil)
 var _ brokerreconciler.Finalizer = (*Reconciler)(nil)
 
 var brokerGVK = brokerv1beta1.SchemeGroupVersion.WithKind("Broker")
-
-func newReconciledNormal(namespace, name string) pkgreconciler.Event {
-	return pkgreconciler.NewEvent(corev1.EventTypeNormal, brokerReconciled, "Broker reconciled: \"%s/%s\"", namespace, name)
-}
 
 func (r *Reconciler) ReconcileKind(ctx context.Context, b *brokerv1beta1.Broker) pkgreconciler.Event {
 	if err := r.reconcileBroker(ctx, b); err != nil {
@@ -126,7 +127,7 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, b *brokerv1beta1.Broker)
 
 	logging.FromContext(ctx).Info("targetsConfig", zap.Any("cfg", r.targetsConfig.String()))
 
-	return newReconciledNormal(b.Namespace, b.Name)
+	return pkgreconciler.NewEvent(corev1.EventTypeNormal, brokerReconciled, "Broker reconciled: \"%s/%s\"", b.Namespace, b.Name)
 }
 
 func (r *Reconciler) FinalizeKind(ctx context.Context, b *brokerv1beta1.Broker) pkgreconciler.Event {
@@ -148,7 +149,8 @@ func (r *Reconciler) FinalizeKind(ctx context.Context, b *brokerv1beta1.Broker) 
 	// update the status to UNKNOWN and remove address etc. Maybe need a new
 	// status DELETED or a deleted timestamp that can be used to clean up later.
 
-	return newReconciledNormal(b.Namespace, b.Name)
+	return pkgreconciler.NewEvent(corev1.EventTypeNormal, brokerFinalized, "Broker finalized: \"%s/%s\"", b.Namespace, b.Name)
+
 }
 
 func (r *Reconciler) reconcileBroker(ctx context.Context, b *brokerv1beta1.Broker) error {
@@ -206,8 +208,8 @@ func (r *Reconciler) reconcileBroker(ctx context.Context, b *brokerv1beta1.Broke
 func (r *Reconciler) reconcileDecouplingTopicAndSubscription(ctx context.Context, b *brokerv1beta1.Broker) error {
 	logger := logging.FromContext(ctx)
 	logger.Debug("Reconciling decoupling topic", zap.Any("broker", b))
-	// get ProjectID from metadata
-	projectID, err := utils.ProjectID("")
+	// get ProjectID from metadata if projectID isn't set
+	projectID, err := utils.ProjectID(r.projectID)
 	if err != nil {
 		logger.Error("Failed to find project id", zap.Error(err))
 		return err
@@ -304,8 +306,8 @@ func (r *Reconciler) deleteDecouplingTopicAndSubscription(ctx context.Context, b
 	logger := logging.FromContext(ctx)
 	logger.Debug("Deleting decoupling topic")
 
-	// get ProjectID from metadata
-	projectID, err := utils.ProjectID("")
+	// get ProjectID from metadata if projectID isn't set
+	projectID, err := utils.ProjectID(r.projectID)
 	if err != nil {
 		logger.Error("Failed to find project id", zap.Error(err))
 		return err
