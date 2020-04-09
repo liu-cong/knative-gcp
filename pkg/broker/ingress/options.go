@@ -19,6 +19,7 @@ package ingress
 import (
 	"context"
 	"fmt"
+	"github.com/google/knative-gcp/pkg/broker/config/volume"
 
 	cloudevents "github.com/cloudevents/sdk-go/v2"
 	"github.com/google/knative-gcp/pkg/broker/config"
@@ -36,32 +37,55 @@ func WithPort(port int) HandlerOption {
 	}
 }
 
-// WithProjectID creates a pubsub client for the given project ID to communicate with pubsusb decouple topics.
-func WithProjectID(id string) HandlerOption {
+// WithDecoupleSink specifies the decouple sink.
+func WithDecoupleSink(decouple DecoupleSink) HandlerOption {
 	return func(h *handler) error {
+		h.decouple = decouple
+		return nil
+	}
+}
+
+// MultiTopicDecoupleSinkOption is the option to configure multiTopicDecoupleSink.
+type MultiTopicDecoupleSinkOption func(sink *multiTopicDecoupleSink) error
+
+// WithPubsubClient specifies the pubsub client to use.
+func WithPubsubClient(client cloudevents.Client) MultiTopicDecoupleSinkOption {
+	return func(sink *multiTopicDecoupleSink) error {
+		sink.client = client
+		return nil
+	}
+}
+
+// WithProjectID creates a pubsub client for the given project ID to communicate with pubsusb decouple topics.
+func WithProjectID(id string) MultiTopicDecoupleSinkOption {
+	return func(sink *multiTopicDecoupleSink) error {
 		ctx := context.Background()
 		client, err := newPubSubClient(ctx, id)
 		if err != nil {
 			return fmt.Errorf("failed to create pubsub client: %v", err)
 		}
-		h.decouple, err = NewMultiTopicDecoupleSink(context.Background(), WithPubsubClient(client))
-		return err
-	}
-}
-
-// MultiTopicDecoupleSinkOption is the option to configure multiTopicDecoupleSink.
-type MultiTopicDecoupleSinkOption func(sink *multiTopicDecoupleSink)
-
-// WithPubsubClient specifies the pubsub client to use.
-func WithPubsubClient(client cloudevents.Client) MultiTopicDecoupleSinkOption {
-	return func(sink *multiTopicDecoupleSink) {
 		sink.client = client
+		return nil
 	}
 }
+
 
 // WithBrokerConfig specifies the broker config. It can be created by reading a configmap mount.
 func WithBrokerConfig(brokerConfig config.ReadonlyTargets) MultiTopicDecoupleSinkOption {
-	return func(sink *multiTopicDecoupleSink) {
+	return func(sink *multiTopicDecoupleSink) error {
 		sink.brokerConfig = brokerConfig
+		return nil
+	}
+}
+
+// WithBrokerConfigPath creates a brokerConfig from the given path.
+func WithBrokerConfigPath(path string) MultiTopicDecoupleSinkOption {
+	return func(sink *multiTopicDecoupleSink) error {
+		brokerConfig, err := volume.NewTargetsFromFile(volume.WithPath(path))
+		if err != nil {
+			return fmt.Errorf("creating broker config for default multi topic decouple sink")
+		}
+		sink.brokerConfig = brokerConfig
+		return nil
 	}
 }

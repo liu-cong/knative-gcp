@@ -28,7 +28,7 @@ import (
 )
 
 const (
-	defaultPath = "/var/run/cloud-run-events/broker/targets"
+	DefaultPath = "/var/run/cloud-run-events/broker/targets"
 )
 
 // Targets implements config.ReadonlyTargets with data
@@ -47,7 +47,7 @@ var _ config.ReadonlyTargets = (*Targets)(nil)
 func NewTargetsFromFile(opts ...Option) (config.ReadonlyTargets, error) {
 	t := &Targets{
 		CachedTargets: config.CachedTargets{},
-		path:          defaultPath,
+		path:          DefaultPath,
 	}
 
 	for _, opt := range opts {

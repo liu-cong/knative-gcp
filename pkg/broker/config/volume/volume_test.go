@@ -23,6 +23,7 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	"github.com/google/knative-gcp/pkg/broker/config"
+	"github.com/google/knative-gcp/pkg/broker/config/volume/test"
 )
 
 func TestSyncConfigFromFile(t *testing.T) {
@@ -101,29 +102,12 @@ func TestSyncConfigFromFile(t *testing.T) {
 		},
 	}
 
-	b, _ := proto.Marshal(data)
-	dir, err := ioutil.TempDir("", "configtest-*")
-	if err != nil {
-		t.Fatalf("unexpected error from creating temp dir: %v", err)
-	}
-	tmp, err := ioutil.TempFile(dir, "test-*")
-	if err != nil {
-		t.Fatalf("unexpected error from creating config file: %v", err)
-	}
-	defer func() {
-		tmp.Close()
-		os.RemoveAll(dir)
-	}()
-	if _, err := tmp.Write(b); err != nil {
-		t.Fatalf("unexpected error from writing config file: %v", err)
-	}
-	if err := tmp.Close(); err != nil {
-		t.Fatalf("unexpected error from closing config file: %v", err)
-	}
+	path, cleanup := test.CreateConfigFile(t, data)
+	defer cleanup()
 
 	ch := make(chan struct{}, 1)
 
-	targets, err := NewTargetsFromFile(WithPath(tmp.Name()), WithNotifyChan(ch))
+	targets, err := NewTargetsFromFile(WithPath(path), WithNotifyChan(ch))
 	if err != nil {
 		t.Fatalf("unexpected error from NewTargetsFromFile: %v", err)
 	}
@@ -157,8 +141,8 @@ func TestSyncConfigFromFile(t *testing.T) {
 	}
 
 	delete(data.Brokers["ns2/broker2"].Targets, "name4")
-	b, _ = proto.Marshal(data)
-	atomicWriteFile(t, tmp.Name(), b)
+	b, _ := proto.Marshal(data)
+	atomicWriteFile(t, path, b)
 
 	<-ch
 

@@ -38,7 +38,6 @@ import (
 const (
 	// TODO(liu-cong) configurable timeout
 	decoupleSinkTimeout = 30 * time.Second
-
 	// defaultPort is the defaultPort number for the ingress HTTP receiver.
 	defaultPort = 8080
 )

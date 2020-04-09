@@ -42,7 +42,9 @@ func NewMultiTopicDecoupleSink(ctx context.Context, options ...MultiTopicDecoupl
 	}
 
 	for _, opt := range options {
-		opt(sink)
+		if err := opt(sink); err != nil {
+			return nil, err
+		}
 	}
 
 	// Apply defaults
