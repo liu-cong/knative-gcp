@@ -20,6 +20,7 @@ import (
 	"context"
 
 	brokerv1beta1 "github.com/google/knative-gcp/pkg/apis/broker/v1beta1"
+	"github.com/google/knative-gcp/pkg/broker/config/memory"
 	injectionclient "github.com/google/knative-gcp/pkg/client/injection/client"
 	brokerinformer "github.com/google/knative-gcp/pkg/client/injection/informers/broker/v1beta1/broker"
 	triggerinformer "github.com/google/knative-gcp/pkg/client/injection/informers/broker/v1beta1/trigger"
@@ -27,6 +28,7 @@ import (
 	triggerreconciler "github.com/google/knative-gcp/pkg/client/injection/reconciler/broker/v1beta1/trigger"
 	gpubsub "github.com/google/knative-gcp/pkg/gclient/pubsub"
 	"github.com/google/knative-gcp/pkg/reconciler"
+	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/cache"
 	eventingv1beta1 "knative.dev/eventing/pkg/apis/eventing/v1beta1"
@@ -60,6 +62,15 @@ func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl 
 		endpointsLister:    endpointsInformer.Lister(),
 		CreateClientFn:     gpubsub.NewClient,
 		targetsNeedsUpdate: make(chan struct{}),
+	}
+
+	//TODO wrap this up in a targets struct backed by a configmap
+	// Load targets config from the existing configmap if present
+	if err := r.LoadTargetsConfig(ctx); err != nil {
+		r.Logger.Error("error loading targets config", zap.Error(err))
+		// For some reason the targets config is corrupt, proceed with an
+		// empty one
+		r.targetsConfig = memory.NewEmptyTargets()
 	}
 
 	// Start the single thread updating the targets configmap

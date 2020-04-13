@@ -20,7 +20,6 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/gogo/protobuf/proto"
@@ -93,8 +92,7 @@ type Reconciler struct {
 	triggerReconciler controller.Reconciler
 
 	// TODO allow configuring multiples of these
-	targetsConfig  config.Targets
-	loadConfigOnce sync.Once
+	targetsConfig config.Targets
 
 	// targetsNeedsUpdate is a channel that flags the targets ConfigMap as
 	// needing update. This is done in a separate goroutine to avoid contention
@@ -399,15 +397,6 @@ func (r *Reconciler) reconcileTriggers(ctx context.Context, b *brokerv1beta1.Bro
 // This function is not thread-safe and should only be executed by
 // TargetsConfigUpdater
 func (r *Reconciler) updateTargetsConfig(ctx context.Context) error {
-	//Load the existing config first if it exists
-	r.loadConfigOnce.Do(func() {
-		if err := r.loadTargetsConfig(ctx); err != nil {
-			r.Logger.Error("error loading targets config", zap.Error(err))
-			// For some reason the targets config is corrupt, proceed with an
-			// empty one
-			r.targetsConfig = memory.NewEmptyTargets()
-		}
-	})
 	//TODO resources package?
 	data, err := r.targetsConfig.Bytes()
 	if err != nil {
@@ -447,8 +436,12 @@ func (r *Reconciler) updateTargetsConfig(ctx context.Context) error {
 	return nil
 }
 
-func (r *Reconciler) loadTargetsConfig(ctx context.Context) error {
+// LoadTargetsConfig retrieves the targets ConfigMap and
+// populates the targets config struct.
+func (r *Reconciler) LoadTargetsConfig(ctx context.Context) error {
 	r.Logger.Debug("Loading targets config from configmap")
+	//TODO should we use the apiserver here?
+	// kubeclient.Get(ctx).CoreV1().ConfigMaps(system.Namespace()).Get(targetsCMName. metav1.GetOptions{})
 	//TODO retry with wait.ExponentialBackoff
 	existing, err := r.configMapLister.ConfigMaps(system.Namespace()).Get(targetsCMName)
 	if err != nil {
