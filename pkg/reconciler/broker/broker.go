@@ -183,7 +183,7 @@ func (r *Reconciler) reconcileBroker(ctx context.Context, b *brokerv1beta1.Broke
 
 	r.targetsConfig.MutateBroker(b.Namespace, b.Name, func(m config.BrokerMutation) {
 		m.SetID(string(b.UID))
-		m.SetAddress("") //TODO
+		m.SetAddress(b.Status.Address.URL.String())
 		m.SetDecoupleQueue(&config.Queue{
 			//TODO should this use the status fields or the name generator funcs?
 			Topic:        b.Status.TopicID,

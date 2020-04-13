@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	brokerv1beta1 "github.com/google/knative-gcp/pkg/apis/broker/v1beta1"
+	"github.com/google/knative-gcp/pkg/broker/config/memory"
 	"github.com/google/knative-gcp/pkg/client/injection/ducks/duck/v1alpha1/resource"
 	brokerreconciler "github.com/google/knative-gcp/pkg/client/injection/reconciler/broker/v1beta1/broker"
 	gpubsub "github.com/google/knative-gcp/pkg/gclient/pubsub/testing"
@@ -30,6 +31,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
+	clientgotesting "k8s.io/client-go/testing"
+	"knative.dev/eventing/pkg/utils"
+	"knative.dev/pkg/apis"
 	"knative.dev/pkg/client/injection/ducks/duck/v1/addressable"
 	"knative.dev/pkg/configmap"
 	"knative.dev/pkg/controller"
@@ -43,10 +47,24 @@ const (
 
 	testProject = "test-project-id"
 	generation  = 1
+	testUID     = "abc123"
+	systemNS    = "knative-testing"
+
+	finalizerName = "brokers.eventing.knative.dev"
 )
 
 var (
 	testKey = fmt.Sprintf("%s/%s", testNS, brokerName)
+
+	brokerFinalizerUpdatedEvent = Eventf(corev1.EventTypeNormal, "FinalizerUpdate", `Updated "test-broker" finalizers`)
+	brokerReconciledEvent       = Eventf(corev1.EventTypeNormal, "BrokerReconciled", `Broker reconciled: "testnamespace/test-broker"`)
+	brokerFinalizedEvent        = Eventf(corev1.EventTypeNormal, "BrokerFinalized", `Broker finalized: "testnamespace/test-broker"`)
+
+	brokerAddress = &apis.URL{
+		Scheme: "http",
+		Host:   fmt.Sprintf("%s.%s.svc.%s", ingressServiceName, systemNS, utils.GetClusterDomainName()),
+		Path:   fmt.Sprintf("/%s/%s", testNS, brokerName),
+	}
 )
 
 func init() {
@@ -71,7 +89,7 @@ func TestAllCases(t *testing.T) {
 				WithBrokerDeletionTimestamp),
 		},
 		WantEvents: []string{
-			Eventf(corev1.EventTypeNormal, "BrokerFinalized", `Broker finalized: "testnamespace/test-broker"`),
+			brokerFinalizedEvent,
 		},
 		OtherTestData: map[string]interface{}{
 			"ps": gpubsub.TestClientData{
@@ -89,13 +107,14 @@ func TestAllCases(t *testing.T) {
 		Objects: []runtime.Object{
 			NewBroker(brokerName, testNS,
 				WithBrokerClass(brokerv1beta1.BrokerClass),
+				WithBrokerUID(testUID),
 				WithInitBrokerConditions,
 				WithBrokerDeletionTimestamp),
 		},
 		WantEvents: []string{
-			Eventf(corev1.EventTypeNormal, "TopicDeleted", `Deleted PubSub topic "cre-bkr_testnamespace_test-broker_"`),
-			Eventf(corev1.EventTypeNormal, "SubscriptionDeleted", `Deleted PubSub subscription "cre-bkr_testnamespace_test-broker_"`),
-			Eventf(corev1.EventTypeNormal, "BrokerFinalized", `Broker finalized: "testnamespace/test-broker"`),
+			Eventf(corev1.EventTypeNormal, "TopicDeleted", `Deleted PubSub topic "cre-bkr_testnamespace_test-broker_abc123"`),
+			Eventf(corev1.EventTypeNormal, "SubscriptionDeleted", `Deleted PubSub subscription "cre-bkr_testnamespace_test-broker_abc123"`),
+			brokerFinalizedEvent,
 		},
 		OtherTestData: map[string]interface{}{
 			"ps": gpubsub.TestClientData{
@@ -107,6 +126,33 @@ func TestAllCases(t *testing.T) {
 				},
 			},
 		},
+	}, {
+		Name: "Broker created",
+		Key:  testKey,
+		Objects: []runtime.Object{
+			NewBroker(brokerName, testNS,
+				WithBrokerClass(brokerv1beta1.BrokerClass),
+				WithBrokerUID(testUID)),
+			NewEndpoints(ingressServiceName, systemNS,
+				WithEndpointsAddresses(corev1.EndpointAddress{IP: "127.0.0.1"})),
+		},
+		WantStatusUpdates: []clientgotesting.UpdateActionImpl{{
+			Object: NewBroker(brokerName, testNS,
+				WithBrokerClass(brokerv1beta1.BrokerClass),
+				WithBrokerUID(testUID),
+				WithBrokerReadyURI(brokerAddress),
+				WithBrokerProjectID(testProject),
+				WithBrokerTopicAndSubID("cre-bkr_testnamespace_test-broker_abc123")),
+		}},
+		WantEvents: []string{
+			brokerFinalizerUpdatedEvent,
+			Eventf(corev1.EventTypeNormal, "TopicCreated", `Created PubSub topic "cre-bkr_testnamespace_test-broker_abc123"`),
+			Eventf(corev1.EventTypeNormal, "SubscriptionCreated", `Created PubSub subscription "cre-bkr_testnamespace_test-broker_abc123"`),
+			brokerReconciledEvent,
+		},
+		WantPatches: []clientgotesting.PatchActionImpl{
+			patchFinalizers(testNS, brokerName),
+		},
 	}}
 
 	defer logtesting.ClearAll()
@@ -117,10 +163,21 @@ func TestAllCases(t *testing.T) {
 			Base:               reconciler.NewBase(ctx, controllerAgentName, cmw),
 			triggerLister:      listers.GetTriggerLister(),
 			configMapLister:    listers.GetConfigMapLister(),
+			endpointsLister:    listers.GetEndpointsLister(),
 			CreateClientFn:     gpubsub.TestClientCreator(testData["ps"]),
+			targetsConfig:      memory.NewEmptyTargets(),
 			targetsNeedsUpdate: make(chan struct{}),
 			projectID:          testProject,
 		}
 		return brokerreconciler.NewReconciler(ctx, r.Logger, r.RunClientSet, listers.GetBrokerLister(), r.Recorder, r, brokerv1beta1.BrokerClass)
 	}))
+}
+
+func patchFinalizers(namespace, name string) clientgotesting.PatchActionImpl {
+	action := clientgotesting.PatchActionImpl{}
+	action.Name = name
+	action.Namespace = namespace
+	patch := `{"metadata":{"finalizers":["` + finalizerName + `"],"resourceVersion":""}}`
+	action.Patch = []byte(patch)
+	return action
 }

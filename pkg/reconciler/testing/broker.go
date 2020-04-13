@@ -22,6 +22,7 @@ import (
 
 	brokerv1beta1 "github.com/google/knative-gcp/pkg/apis/broker/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	eventingv1beta1 "knative.dev/eventing/pkg/apis/eventing/v1beta1"
 	"knative.dev/pkg/apis"
 )
@@ -65,15 +66,21 @@ func WithBrokerResourceVersion(rv string) BrokerOption {
 	}
 }
 
+func WithBrokerUID(uid string) BrokerOption {
+	return func(b *brokerv1beta1.Broker) {
+		b.UID = types.UID(uid)
+	}
+}
+
 func WithBrokerGeneration(gen int64) BrokerOption {
-	return func(s *brokerv1beta1.Broker) {
-		s.Generation = gen
+	return func(b *brokerv1beta1.Broker) {
+		b.Generation = gen
 	}
 }
 
 func WithBrokerStatusObservedGeneration(gen int64) BrokerOption {
-	return func(s *brokerv1beta1.Broker) {
-		s.Status.ObservedGeneration = gen
+	return func(b *brokerv1beta1.Broker) {
+		b.Status.ObservedGeneration = gen
 	}
 }
 
@@ -99,9 +106,15 @@ func WithBrokerAddressURI(uri *apis.URL) BrokerOption {
 	}
 }
 
-// WithBrokerReady sets .Status to ready.
-func WithBrokerReady(b *brokerv1beta1.Broker) {
-	//b.Status = *v1alpha1.TestHelper.ReadyBrokerStatus()
+// WithBrokerReadyURI is a convenience function that sets all ready conditions to
+// true.
+func WithBrokerReadyURI(address *apis.URL) BrokerOption {
+	return func(b *brokerv1beta1.Broker) {
+		WithIngressAvailable(b)
+		WithBrokerSubscriptionReady(b)
+		WithBrokerTopicReady(b)
+		WithBrokerAddressURI(address)(b)
+	}
 }
 
 // WithIngressFailed calls .Status.MarkIngressFailed on the Broker.
@@ -111,9 +124,28 @@ func WithIngressFailed(reason, msg string) BrokerOption {
 	}
 }
 
-func WithIngressAvailable() BrokerOption {
+func WithIngressAvailable(b *brokerv1beta1.Broker) {
+	b.Status.PropagateIngressAvailability(AvailableEndpoints())
+}
+
+func WithBrokerSubscriptionReady(b *brokerv1beta1.Broker) {
+	b.Status.MarkSubscriptionReady()
+}
+
+func WithBrokerTopicReady(b *brokerv1beta1.Broker) {
+	b.Status.MarkTopicReady()
+}
+
+func WithBrokerProjectID(id string) BrokerOption {
 	return func(b *brokerv1beta1.Broker) {
-		//b.Status.PropagateIngressAvailability(v1alpha1.TestHelper.AvailableEndpoints())
+		b.Status.ProjectID = id
+	}
+}
+
+func WithBrokerTopicAndSubID(id string) BrokerOption {
+	return func(b *brokerv1beta1.Broker) {
+		b.Status.TopicID = id
+		b.Status.SubscriptionID = id
 	}
 }
 
