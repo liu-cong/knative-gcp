@@ -26,6 +26,8 @@ import (
 )
 
 const (
+	// BrokerClass is the annotation value to use when creating a
+	// Google Cloud Broker object.
 	BrokerClass = "googlecloud"
 )
 
