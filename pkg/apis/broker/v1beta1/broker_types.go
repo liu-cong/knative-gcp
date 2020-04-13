@@ -26,7 +26,7 @@ import (
 )
 
 const (
-	BrokerClass = "gcp"
+	BrokerClass = "googlecloud"
 )
 
 // +genclient
