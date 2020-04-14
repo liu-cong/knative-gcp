@@ -24,7 +24,7 @@ import (
 )
 
 // SubscriptionConfig re-implements pubsub.SubscriptionConfig to allow us to
-// use a wrapped Topic internally.
+// use a wrapped Subscription internally.
 type SubscriptionConfig struct {
 	Topic               Topic
 	AckDeadline         time.Duration
@@ -85,4 +85,9 @@ func (s *pubsubSubscription) Update(ctx context.Context, cfg SubscriptionConfig)
 // Delete implements pubsub.Subscription.Delete
 func (s *pubsubSubscription) Delete(ctx context.Context) error {
 	return s.sub.Delete(ctx)
+}
+
+// ID implements pubsub.Subscription.ID
+func (s *pubsubSubscription) ID() string {
+	return s.sub.ID()
 }

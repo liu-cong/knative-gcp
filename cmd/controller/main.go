@@ -21,6 +21,7 @@ import (
 	// The following line to load the gcp plugin (only required to authenticate against GKE clusters).
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 
+	"github.com/google/knative-gcp/pkg/reconciler/broker"
 	"github.com/google/knative-gcp/pkg/reconciler/deployment"
 	"github.com/google/knative-gcp/pkg/reconciler/events/auditlogs"
 	"github.com/google/knative-gcp/pkg/reconciler/events/pubsub"
@@ -46,5 +47,6 @@ func main() {
 		topic.NewController,
 		channel.NewController,
 		deployment.NewController,
+		broker.NewController,
 	)
 }
