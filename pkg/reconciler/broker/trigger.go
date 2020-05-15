@@ -24,7 +24,6 @@ import (
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"knative.dev/eventing/pkg/apis/eventing/v1alpha1"
 	"knative.dev/eventing/pkg/duck"
 	"knative.dev/eventing/pkg/logging"
@@ -70,33 +69,12 @@ type TriggerReconciler struct {
 
 // Check that TriggerReconciler implements Interface
 var _ triggerreconciler.Interface = (*TriggerReconciler)(nil)
-var _ triggerreconciler.Finalizer = (*TriggerReconciler)(nil)
 
 func (r *TriggerReconciler) ReconcileKind(ctx context.Context, t *brokerv1beta1.Trigger) pkgreconciler.Event {
 	b := brokerFromContext(ctx)
-	if b == nil {
-		// Assume the Broker has been deleted or doesn't exist yet. Create a
-		// Broker object with the expected name and namespace to
-		// reconcile with.
-		// TODO move this to resources package?
-		b = &brokerv1beta1.Broker{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      t.Spec.Broker,
-				Namespace: t.Namespace,
-			},
-			//TODO is this needed?
-			Status: brokerv1beta1.BrokerStatus{},
-		}
-		b.Status.InitializeConditions()
-		//return fmt.Errorf("Couldn't fetch Broker from context")
-	}
 	t.Status.InitializeConditions()
 
-	if b.DeletionTimestamp != nil || b.UID == "" {
-		t.Status.MarkBrokerFailed("BrokerDoesNotExist", "Broker %q does not exist", t.Spec.Broker)
-	} else {
-		t.Status.PropagateBrokerStatus(&b.Status)
-	}
+	t.Status.PropagateBrokerStatus(&b.Status)
 
 	if err := r.resolveSubscriber(ctx, t, b); err != nil {
 		return err
@@ -141,23 +119,11 @@ func (r *TriggerReconciler) ReconcileKind(ctx context.Context, t *brokerv1beta1.
 	return pkgreconciler.NewEvent(corev1.EventTypeNormal, triggerReconciled, "Trigger reconciled: \"%s/%s\"", t.Namespace, t.Name)
 }
 
-func (r *TriggerReconciler) FinalizeKind(ctx context.Context, t *brokerv1beta1.Trigger) pkgreconciler.Event {
+func (r *TriggerReconciler) tearDown(ctx context.Context, t *brokerv1beta1.Trigger) pkgreconciler.Event {
+	t.Status.MarkBrokerFailed("BrokerDoesNotExist", "Broker %q does not exist", t.Spec.Broker)
 	if err := r.deleteRetryTopicAndSubscription(ctx, t); err != nil {
 		return err
 	}
-
-	targetsConfig := targetsFromContext(ctx)
-	if targetsConfig == nil {
-		return fmt.Errorf("Couldn't fetch Targets from context")
-	}
-
-	// Use the trigger's namespace and broker name here so the broker isn't needed
-	// from context
-	targetsConfig.MutateBroker(t.Namespace, t.Spec.Broker, func(m config.BrokerMutation) {
-		m.DeleteTargets(&config.Target{
-			Name: t.Name,
-		})
-	})
 
 	return pkgreconciler.NewEvent(corev1.EventTypeNormal, triggerFinalized, "Trigger finalized: \"%s/%s\"", t.Namespace, t.Name)
 

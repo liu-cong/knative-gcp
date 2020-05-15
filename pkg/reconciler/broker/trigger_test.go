@@ -243,7 +243,7 @@ func TestAllCasesTrigger(t *testing.T) {
 		tr.addressableTracker = duck.NewListableTracker(ctx, addressable.Get, func(types.NamespacedName) {}, 0)
 		tr.uriResolver = resolver.NewURIResolver(ctx, func(types.NamespacedName) {})
 
-		r.triggerReconciler = triggerreconciler.NewReconciler(
+		r.triggerGenReconciler = triggerreconciler.NewReconciler(
 			ctx,
 			r.Logger,
 			injectionclient.Get(ctx),

@@ -77,15 +77,33 @@ func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl 
 		}()
 	}
 
+	base := reconciler.NewBase(ctx, controllerAgentName, cmw)
+
+	tr := &TriggerReconciler{
+		Base:         base,
+		pubsubClient: client,
+	}
+
+	triggerGenReconciler := triggerreconciler.NewReconciler(
+		ctx,
+		base.Logger,
+		injectionclient.Get(ctx),
+		triggerInformer.Lister(),
+		base.Recorder,
+		tr,
+	)
+
 	r := &Reconciler{
-		Base:               reconciler.NewBase(ctx, controllerAgentName, cmw),
-		triggerLister:      triggerInformer.Lister(),
-		configMapLister:    configMapInformer.Lister(),
-		endpointsLister:    endpointsInformer.Lister(),
-		deploymentLister:   deploymentInformer.Lister(),
-		podLister:          podInformer.Lister(),
-		pubsubClient:       client,
-		targetsNeedsUpdate: make(chan struct{}),
+		Base:                 base,
+		triggerReconciler:    tr,
+		triggerGenReconciler: triggerGenReconciler,
+		triggerLister:        triggerInformer.Lister(),
+		configMapLister:      configMapInformer.Lister(),
+		endpointsLister:      endpointsInformer.Lister(),
+		deploymentLister:     deploymentInformer.Lister(),
+		podLister:            podInformer.Lister(),
+		pubsubClient:         client,
+		targetsNeedsUpdate:   make(chan struct{}),
 	}
 
 	//TODO wrap this up in a targets struct backed by a configmap
@@ -101,22 +119,6 @@ func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl 
 	go r.TargetsConfigUpdater(ctx)
 
 	impl := brokerreconciler.NewImpl(ctx, r, brokerv1beta1.BrokerClass)
-
-	tr := &TriggerReconciler{
-		Base:         reconciler.NewBase(ctx, controllerAgentName, cmw),
-		pubsubClient: client,
-	}
-
-	triggerReconciler := triggerreconciler.NewReconciler(
-		ctx,
-		r.Logger,
-		injectionclient.Get(ctx),
-		triggerInformer.Lister(),
-		r.Recorder,
-		tr,
-	)
-
-	r.triggerReconciler = triggerReconciler
 
 	r.Logger.Info("Setting up event handlers")
 
@@ -150,20 +152,6 @@ func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl 
 	// 	Handler:    controller.HandleAll(impl.EnqueueLabelOfNamespaceScopedResource("" /*any namespace*/, eventing.BrokerLabelKey)),
 	// })
 
-	//TODO Also reconcile triggers when their broker doesn't exist. Maybe use a
-	// synthetic broker and call reconcileTriggers anyway?
-	// How do we do this? We can check the lister to see if the broker exists
-	// and do something different if it does not, but that still allows the
-	// broker to be deleted while the reconcile is in the queue. Need a workaround
-	// for the gen reconciler not reconciling when the reconciled object doesn't exist.
-
-	// Maybe we need to override the genreconciler's Reconcile method to go ahead and reconcile
-	// if the broker doesn't exist.
-
-	// Is there a race if we create a separate controller for the trigger reconciler?
-	// Yes, because the broker and trigger controller could be reconciling at the same time
-	// If we want the broker controller to continue being responsible for reconciling all triggers,
-	// we need the ability to reconcile objects that don't exist
 	triggerInformer.Informer().AddEventHandler(controller.HandleAll(
 		func(obj interface{}) {
 			if trigger, ok := obj.(*brokerv1beta1.Trigger); ok {

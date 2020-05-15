@@ -22,6 +22,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"k8s.io/client-go/tools/cache"
 	"time"
 
 	"cloud.google.com/go/pubsub"
@@ -35,12 +36,10 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	appsv1listers "k8s.io/client-go/listers/apps/v1"
 	corev1listers "k8s.io/client-go/listers/core/v1"
-	"k8s.io/client-go/tools/cache"
 	"knative.dev/eventing/pkg/apis/eventing"
 	"knative.dev/eventing/pkg/logging"
 	"knative.dev/eventing/pkg/reconciler/names"
 	"knative.dev/pkg/apis"
-	"knative.dev/pkg/controller"
 	pkgreconciler "knative.dev/pkg/reconciler"
 	"knative.dev/pkg/system"
 
@@ -53,6 +52,8 @@ import (
 	"github.com/google/knative-gcp/pkg/reconciler"
 	"github.com/google/knative-gcp/pkg/reconciler/broker/resources"
 	"github.com/google/knative-gcp/pkg/utils"
+	"knative.dev/pkg/controller"
+
 )
 
 const (
@@ -98,7 +99,8 @@ type Reconciler struct {
 	podLister        corev1listers.PodLister
 
 	// Reconciles a broker's triggers
-	triggerReconciler controller.Reconciler
+	triggerGenReconciler controller.Reconciler
+	triggerReconciler *TriggerReconciler
 
 	// TODO allow configuring multiples of these
 	targetsConfig config.Targets
@@ -130,11 +132,6 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, b *brokerv1beta1.Broker)
 		// whatever info is available. or put this in a defer?
 	}
 
-	if err := r.reconcileTriggers(ctx, b); err != nil {
-		logging.FromContext(ctx).Error("Problem reconciling triggers", zap.Error(err))
-		return fmt.Errorf("failed to reconcile triggers: %w", err)
-	}
-
 	return pkgreconciler.NewEvent(corev1.EventTypeNormal, brokerReconciled, "Broker reconciled: \"%s/%s\"", b.Namespace, b.Name)
 }
 
@@ -142,22 +139,24 @@ func (r *Reconciler) FinalizeKind(ctx context.Context, b *brokerv1beta1.Broker) 
 	logger := logging.FromContext(ctx)
 	logger.Debug("Finalizing Broker", zap.Any("broker", b))
 
-	// Reconcile triggers so they update their status
-	// TODO is this the best way to reconcile triggers when their broker is
-	// being deleted?
-	if err := r.reconcileTriggers(ctx, b); err != nil {
-		logger.Error("Problem reconciling triggers", zap.Error(err))
-		return fmt.Errorf("failed to reconcile triggers: %w", err)
-	}
-
+	fmt.Println("==========Deleting decoupling queue")
 	if err := r.deleteDecouplingTopicAndSubscription(ctx, b); err != nil {
 		return fmt.Errorf("Failed to delete Pub/Sub topic: %w", err)
 	}
 
-	// TODO should we also delete the broker from the config? Maybe better
-	// to keep the targets in place if there are still triggers. But we can
-	// update the status to UNKNOWN and remove address etc. Maybe need a new
-	// status DELETED or a deleted timestamp that can be used to clean up later.
+	fmt.Println("==========Deleting config")
+	r.targetsConfig.MutateBroker(b.Namespace, b.Name, func(m config.BrokerMutation) { m.Delete() })
+
+	fmt.Println("==========Tearing down triggers")
+	triggers, err := r.getTriggers(ctx, b)
+	if err != nil {
+		return err
+	}
+	if err := r.tearDownTriggers(ctx, b, triggers); err != nil {
+		logger.Error("Problem reconciling triggers", zap.Error(err))
+		return fmt.Errorf("failed to reconcile triggers: %w", err)
+	}
+
 
 	return pkgreconciler.NewEvent(corev1.EventTypeNormal, brokerFinalized, "Broker finalized: \"%s/%s\"", b.Namespace, b.Name)
 
@@ -193,25 +192,35 @@ func (r *Reconciler) reconcileBroker(ctx context.Context, b *brokerv1beta1.Broke
 	}
 	b.Status.PropagateIngressAvailability(ingressEndpoints)
 
-	r.targetsConfig.MutateBroker(b.Namespace, b.Name, func(m config.BrokerMutation) {
-		m.SetID(string(b.UID))
-		m.SetAddress(b.Status.Address.URL.String())
-		m.SetDecoupleQueue(&config.Queue{
-			Topic:        resources.GenerateDecouplingTopicName(b),
-			Subscription: resources.GenerateDecouplingSubscriptionName(b),
-		})
-		if b.Status.IsReady() {
-			m.SetState(config.State_READY)
-		} else {
-			m.SetState(config.State_UNKNOWN)
-		}
-	})
+	triggers, err := r.getTriggers(ctx, b)
+	if err != nil {
+		return err
+	}
+
+	if err := r.reconcileTriggers(ctx, b, triggers); err != nil {
+		logging.FromContext(ctx).Error("Problem reconciling triggers", zap.Error(err))
+		return fmt.Errorf("failed to reconcile triggers: %w", err)
+	}
+
+	r.reconcileConfig(ctx, b, triggers)
 
 	// Update config map
 	// TODO should this happen in a defer so there's an update regardless of
 	// error status, or only when reconcile is successful?
 	r.flagTargetsForUpdate()
 	return nil
+}
+
+func (r *Reconciler) getTriggers(ctx context.Context, b *brokerv1beta1.Broker) ([]*brokerv1beta1.Trigger, error) {
+	// Filter by `eventing.knative.dev/broker: <name>` here
+	// to get only the triggers for this broker. The trigger webhook will
+	// ensure that triggers are always labeled with their broker name.
+	triggers, err := r.triggerLister.Triggers(b.Namespace).List(labels.SelectorFromSet(map[string]string{eventing.BrokerLabelKey: b.Name}))
+	if err != nil {
+		logging.FromContext(ctx).Error("Problem listing triggers", zap.Error(err))
+		return nil, err
+	}
+	return triggers, nil
 }
 
 func (r *Reconciler) reconcileDecouplingTopicAndSubscription(ctx context.Context, b *brokerv1beta1.Broker) error {
@@ -382,35 +391,88 @@ func (r *Reconciler) deleteDecouplingTopicAndSubscription(ctx context.Context, b
 }
 
 // reconcileTriggers reconciles the Triggers that are pointed to this broker
-func (r *Reconciler) reconcileTriggers(ctx context.Context, b *brokerv1beta1.Broker) error {
-
-	// Filter by `eventing.knative.dev/broker: <name>` here
-	// to get only the triggers for this broker. The trigger webhook will
-	// ensure that triggers are always labeled with their broker name.
-	triggers, err := r.triggerLister.Triggers(b.Namespace).List(
-		labels.SelectorFromSet(map[string]string{eventing.BrokerLabelKey: b.Name}))
-	if err != nil {
-		return err
+func (r *Reconciler) reconcileTriggers(ctx context.Context, b *brokerv1beta1.Broker, triggers []*brokerv1beta1.Trigger) error {
+	var err error
+	for _, t := range triggers {
+		if t.Spec.Broker == b.Name {
+			logger := logging.FromContext(ctx).With(zap.String("trigger", t.Name), zap.String("broker", b.Name))
+			ctx = contextWithBroker(ctx, b)
+			ctx = logging.WithLogger(ctx, logger)
+			if tKey, err := cache.MetaNamespaceKeyFunc(t); err == nil {
+				err = multierr.Append(err, r.triggerGenReconciler.Reconcile(ctx, tKey))
+			}
+		}
 	}
 
-	ctx = contextWithBroker(ctx, b)
-	ctx = contextWithTargets(ctx, r.targetsConfig)
+	return err
+}
+
+func (r *Reconciler) tearDownTriggers(ctx context.Context, b *brokerv1beta1.Broker, triggers []*brokerv1beta1.Trigger) error {
+	var err error
+	for _, t := range triggers {
+		if t.Spec.Broker == b.Name {
+			logger := logging.FromContext(ctx).With(zap.String("trigger", t.Name), zap.String("broker", b.Name))
+			ctx = logging.WithLogger(ctx, logger)
+			err = multierr.Append(err, r.triggerReconciler.tearDown(ctx, t))
+		}
+	}
+
+	return err
+}
+
+//TODO all this stuff should be in a configmap variant of the config object
+
+// reconcileConfig reconstructs the data entry for the given broker in targets-config.
+func (r *Reconciler) reconcileConfig(ctx context.Context, b *brokerv1beta1.Broker, triggers []*brokerv1beta1.Trigger) {
+	// TODO Update BrokerMutation to just have Delete() and Set() methods. Now we always reconstruct the entire entry
+	// and we don't need incremental updates per trigger.
+	// First delete the entry.
+	r.targetsConfig.MutateBroker(b.Namespace, b.Name, func(m config.BrokerMutation) { m.Delete() })
+	// Then reconstruct and insert it
+	r.targetsConfig.MutateBroker(b.Namespace, b.Name, func(m config.BrokerMutation) {
+		m.SetID(string(b.UID))
+		m.SetAddress(b.Status.Address.URL.String())
+		m.SetDecoupleQueue(&config.Queue{
+			Topic:        resources.GenerateDecouplingTopicName(b),
+			Subscription: resources.GenerateDecouplingSubscriptionName(b),
+		})
+		if b.Status.IsReady() {
+			m.SetState(config.State_READY)
+		} else {
+			m.SetState(config.State_UNKNOWN)
+		}
+	})
+	// Insert each Trigger to the config.
 	for _, t := range triggers {
 		if t.Spec.Broker == b.Name {
 			logger := logging.FromContext(ctx).With(zap.String("trigger", t.Name), zap.String("broker", b.Name))
 			ctx = logging.WithLogger(ctx, logger)
 
-			if tKey, err := cache.MetaNamespaceKeyFunc(t); err == nil {
-				err = r.triggerReconciler.Reconcile(ctx, tKey)
-			}
+			r.targetsConfig.MutateBroker(b.Namespace, b.Name, func(m config.BrokerMutation) {
+				target := &config.Target{
+					Id:        string(t.UID),
+					Name:      t.Name,
+					Namespace: t.Namespace,
+					Broker:    b.Name,
+					Address:   t.Status.SubscriberURI.String(),
+					RetryQueue: &config.Queue{
+						Topic:        resources.GenerateRetryTopicName(t),
+						Subscription: resources.GenerateRetrySubscriptionName(t),
+					},
+				}
+				if t.Spec.Filter != nil && t.Spec.Filter.Attributes != nil {
+					target.FilterAttributes = t.Spec.Filter.Attributes
+				}
+				if t.Status.IsReady() {
+					target.State = config.State_READY
+				} else {
+					target.State = config.State_UNKNOWN
+				}
+				m.UpsertTargets(target)
+			})
 		}
 	}
-
-	//TODO aggregate errors?
-	return err
 }
-
-//TODO all this stuff should be in a configmap variant of the config object
 
 // This function is not thread-safe and should only be executed by
 // TargetsConfigUpdater
