@@ -17,6 +17,7 @@ limitations under the License.
 package v1beta1
 
 import (
+	"fmt"
 	eventingv1beta1 "knative.dev/eventing/pkg/apis/eventing/v1beta1"
 	"knative.dev/pkg/apis"
 )
@@ -95,7 +96,9 @@ func (bs *BrokerStatus) MarkTopicUnknown(reason, format string, args ...interfac
 }
 
 func (bs *BrokerStatus) MarkTopicReady() {
+	fmt.Printf("============Marking topic ready, before: %+v \n", bs.GetCondition(BrokerConditionTopic))
 	brokerCondSet.Manage(bs).MarkTrue(BrokerConditionTopic)
+	fmt.Printf("============Marking topic ready, after: %+v \n", bs.GetCondition(BrokerConditionTopic))
 }
 
 func (bs *BrokerStatus) MarkSubscriptionFailed(reason, format string, args ...interface{}) {

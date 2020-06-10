@@ -256,6 +256,7 @@ func (r conditionsImpl) ClearCondition(t ConditionType) error {
 // MarkTrue sets the status of t to true, and then marks the happy condition to
 // true if all other dependents are also true.
 func (r conditionsImpl) MarkTrue(t ConditionType) {
+	fmt.Printf("===========MarkTrue for : %+v \n", t)
 	// Set the specified condition.
 	r.SetCondition(Condition{
 		Type:     t,

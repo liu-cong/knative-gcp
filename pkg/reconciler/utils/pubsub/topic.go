@@ -24,6 +24,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"knative.dev/eventing/pkg/logging"
+	brokerv1beta1 "github.com/google/knative-gcp/pkg/apis/broker/v1beta1"
+
 )
 
 const (
@@ -56,7 +58,9 @@ func (r *Reconciler) ReconcileTopic(ctx context.Context, id string, topicConfig 
 	}
 	logger.Info("Created PubSub topic", zap.String("name", topic.ID()))
 	r.recorder.Eventf(obj, corev1.EventTypeNormal, topicCreated, "Created PubSub topic %q", topic.ID())
+	logger.Info("===========Going to mark topic ready", zap.Any("before", updater.GetCondition(brokerv1beta1.BrokerConditionTopic)))
 	updater.MarkTopicReady()
+	logger.Info("===================Status after marking topic ready:", zap.Any("after", updater.GetCondition(brokerv1beta1.BrokerConditionTopic)))
 	return topic, nil
 }
 

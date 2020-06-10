@@ -267,7 +267,9 @@ func (r *Reconciler) reconcileDecouplingTopicAndSubscription(ctx context.Context
 	if err != nil {
 		return err
 	}
+	logger.Info("===================Status after TOPIC reconciliation:", zap.Any("string", b.Status.GetCondition(brokerv1beta1.BrokerConditionTopic)))
 	// TODO(grantr): this isn't actually persisted due to webhook issues.
+	//TODO uncomment when eventing webhook allows this
 	//TODO uncomment when eventing webhook allows this
 	//b.Status.TopicID = topic.ID()
 

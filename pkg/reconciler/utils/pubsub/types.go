@@ -19,6 +19,7 @@ package pubsub
 import (
 	"cloud.google.com/go/pubsub"
 	"k8s.io/client-go/tools/record"
+	"knative.dev/pkg/apis"
 )
 
 type Reconciler struct {
@@ -35,6 +36,7 @@ func NewReconciler(client *pubsub.Client, recorder record.EventRecorder) *Reconc
 
 // StatusUpdater is an interface which updates resource status based on pubsub reconciliation results.
 type StatusUpdater interface {
+	GetCondition(t apis.ConditionType) *apis.Condition
 	MarkTopicFailed(reason, format string, args ...interface{})
 	MarkTopicUnknown(reason, format string, args ...interface{})
 	MarkTopicReady()
